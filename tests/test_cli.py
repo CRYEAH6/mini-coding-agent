@@ -1,9 +1,9 @@
 """Tests for the command-line interface."""
 
+from pathlib import Path
 from unittest.mock import Mock
 
-from pathlib import Path
-
+import mini_agent.cli as cli_module
 from mini_agent.cli import _print_startup, build_parser, main
 from mini_agent.config import ConfigurationError, Settings
 
@@ -55,3 +55,27 @@ def test_startup_summary_is_clear_and_secret_free(capsys) -> None:
     assert "最大步骤：12" in output
     assert "上下文预算：100000 字符" in output
     assert "高风险命令默认拦截" in output
+
+
+def test_main_reports_api_error(monkeypatch, capsys, tmp_path: Path) -> None:
+    class FakeAPIError(Exception):
+        pass
+
+    monkeypatch.setattr(cli_module, "APIError", FakeAPIError)
+    monkeypatch.setattr(
+        Settings,
+        "from_env",
+        Mock(return_value=Settings(api_key="test-key")),
+    )
+    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(
+        cli_module.CodingAgent,
+        "run",
+        Mock(side_effect=FakeAPIError("network unavailable")),
+    )
+
+    exit_code = main(["Fix the bug", "--workspace", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 4
+    assert "API 请求失败：network unavailable" in output

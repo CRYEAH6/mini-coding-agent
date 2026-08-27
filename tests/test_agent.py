@@ -247,3 +247,47 @@ def test_tool_description_does_not_echo_sensitive_content() -> None:
     assert "path=config.py" in write_description
     assert "content_chars=13" in write_description
     assert "private-value" not in write_description
+
+
+def test_agent_executes_multiple_tool_calls_from_one_response(
+    tmp_path: Path,
+) -> None:
+    first = _message(
+        tool_calls=[
+            _tool_call(
+                "write_file",
+                '{"path": "first.txt", "content": "first"}',
+                "call-first",
+            ),
+            _tool_call(
+                "write_file",
+                '{"path": "second.txt", "content": "second"}',
+                "call-second",
+            ),
+        ]
+    )
+    client = FakeClient([first, _message(content="两个文件已创建。")])
+
+    result = CodingAgent(client, ToolRegistry(tmp_path)).run("创建两个文件")
+
+    assert result.tool_calls == 2
+    assert (tmp_path / "first.txt").read_text(encoding="utf-8") == "first"
+    assert (tmp_path / "second.txt").read_text(encoding="utf-8") == "second"
+    assert [message["role"] for message in client.requests[1][-3:]] == [
+        "assistant",
+        "tool",
+        "tool",
+    ]
+
+
+def test_agent_recovers_after_invalid_tool_json(tmp_path: Path) -> None:
+    first = _message(
+        tool_calls=[_tool_call("read_file", "not-json", "call-invalid")]
+    )
+    client = FakeClient([first, _message(content="参数错误已处理。")])
+
+    result = CodingAgent(client, ToolRegistry(tmp_path)).run("读取文件")
+
+    assert result.content == "参数错误已处理。"
+    tool_result = client.requests[1][-1]["content"]
+    assert "工具参数不是有效 JSON" in tool_result

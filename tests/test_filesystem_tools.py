@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from mini_agent.tools.filesystem import FileTools
+from mini_agent.tools.filesystem import FileTools, MAX_FILE_CHARS
 
 
 def test_write_read_and_list_files(tmp_path: Path) -> None:
@@ -94,3 +94,14 @@ def test_read_file_rejects_non_utf8_content(tmp_path: Path) -> None:
 
     assert not result.success
     assert "UTF-8" in result.content
+
+
+def test_read_file_truncates_oversized_content(tmp_path: Path) -> None:
+    content = "x" * (MAX_FILE_CHARS + 25)
+    (tmp_path / "large.txt").write_text(content, encoding="utf-8")
+
+    result = FileTools(tmp_path).read_file("large.txt")
+
+    assert result.success
+    assert result.content.startswith("x" * MAX_FILE_CHARS)
+    assert "其余 25 个字符已省略" in result.content

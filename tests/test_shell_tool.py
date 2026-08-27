@@ -1,8 +1,9 @@
 """Tests for bounded shell-command execution."""
 
 from pathlib import Path
+import time
 
-from mini_agent.tools.shell import ShellTool
+from mini_agent.tools.shell import MAX_OUTPUT_CHARS, ShellTool
 
 
 def test_run_command_captures_output_and_working_directory(tmp_path: Path) -> None:
@@ -47,3 +48,27 @@ def test_run_command_blocks_dangerous_command_before_execution(
     assert not result.success
     assert "安全策略阻止" in result.content
     assert target.exists()
+
+
+def test_run_command_truncates_oversized_output(tmp_path: Path) -> None:
+    command = f"python3 -c 'print(\"x\" * {MAX_OUTPUT_CHARS + 100})'"
+
+    result = ShellTool(tmp_path).run_command(command)
+
+    assert result.success
+    assert "其余" in result.content
+    assert "个字符已省略" in result.content
+
+
+def test_timeout_stops_child_process_side_effect(tmp_path: Path) -> None:
+    command = (
+        "python3 -c 'import time; time.sleep(0.4); "
+        'open("late.txt", "w").write("late")\''
+    )
+
+    result = ShellTool(tmp_path).run_command(command, timeout_seconds=0.05)
+    time.sleep(0.6)
+
+    assert not result.success
+    assert "已终止" in result.content
+    assert not (tmp_path / "late.txt").exists()

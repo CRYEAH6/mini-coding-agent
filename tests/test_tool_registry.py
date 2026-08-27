@@ -59,3 +59,13 @@ def test_tool_result_serializes_as_unicode_json(tmp_path: Path) -> None:
     payload = json.loads(result.to_json())
 
     assert payload == {"success": True, "content": "目录为空。"}
+
+
+def test_registry_rejects_wrong_argument_type(tmp_path: Path) -> None:
+    result = ToolRegistry(tmp_path).execute(
+        "write_file",
+        '{"path": "example.txt", "content": 42}',
+    )
+
+    assert not result.success
+    assert "content 必须是字符串" in result.content
