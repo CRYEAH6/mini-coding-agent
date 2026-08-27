@@ -8,6 +8,7 @@ from mini_agent.tools import ToolRegistry
 
 
 DEFAULT_MAX_STEPS = 20
+EVENT_PREVIEW_CHARS = 500
 
 SYSTEM_PROMPT = """你是一个在本地项目中工作的编程智能体。
 请先理解任务和现有代码，再选择合适的工具完成修改。
@@ -84,6 +85,8 @@ class CodingAgent:
                 result = self._tools.execute(name, tool_call.function.arguments)
                 status = "成功" if result.success else "失败"
                 self._emit(f"工具结果：{status}")
+                if not result.success:
+                    self._emit(f"工具错误：{_preview(result.content)}")
                 messages.append(
                     {
                         "role": "tool",
@@ -122,3 +125,10 @@ def _serialize_assistant_message(message: Any) -> Mapping[str, Any]:
             for tool_call in tool_calls
         ]
     return payload
+
+
+def _preview(content: str) -> str:
+    """Keep terminal error output informative but compact."""
+    if len(content) <= EVENT_PREVIEW_CHARS:
+        return content
+    return f"{content[:EVENT_PREVIEW_CHARS]}..."

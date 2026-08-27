@@ -117,3 +117,20 @@ def test_agent_enforces_step_limit(tmp_path: Path) -> None:
 
     with pytest.raises(StepLimitError, match="最大步骤数 1"):
         agent.run("持续检查")
+
+
+def test_agent_emits_compact_tool_error(tmp_path: Path) -> None:
+    first = _message(
+        tool_calls=[_tool_call("read_file", '{"path": "missing.txt"}')]
+    )
+    events = []
+    agent = CodingAgent(
+        FakeClient([first, _message(content="无法读取文件。")]),
+        ToolRegistry(tmp_path),
+        event_handler=events.append,
+    )
+
+    agent.run("读取文件")
+
+    assert "工具结果：失败" in events
+    assert any(event.startswith("工具错误：路径不存在") for event in events)

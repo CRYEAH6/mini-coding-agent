@@ -30,6 +30,15 @@ def test_list_files_hides_internal_directories(tmp_path: Path) -> None:
     assert result.content == "visible/"
 
 
+def test_list_files_treats_empty_path_as_workspace(tmp_path: Path) -> None:
+    (tmp_path / "example.txt").write_text("content", encoding="utf-8")
+
+    result = FileTools(tmp_path).list_files("")
+
+    assert result.success
+    assert result.content == "example.txt"
+
+
 def test_replace_in_file_requires_unambiguous_match(tmp_path: Path) -> None:
     target = tmp_path / "values.txt"
     target.write_text("old\nold\n", encoding="utf-8")

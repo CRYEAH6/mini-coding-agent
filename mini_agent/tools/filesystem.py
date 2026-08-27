@@ -23,6 +23,8 @@ class FileTools:
 
     def list_files(self, path: str = ".") -> ToolResult:
         """List direct children of a workspace directory."""
+        if isinstance(path, str) and not path.strip():
+            path = "."
         try:
             target = self._resolve_path(path, must_exist=True)
             if not target.is_dir():
