@@ -46,6 +46,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             client,
             tools,
             max_steps=args.max_steps,
+            max_context_chars=settings.max_context_chars,
             event_handler=print,
         )
         result = agent.run(task)
@@ -68,4 +69,6 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     print("\n任务完成：")
     print(result.content)
     print(f"\n共调用模型 {result.steps} 次，执行工具 {result.tool_calls} 次。")
+    if result.compacted_rounds:
+        print(f"上下文压缩了 {result.compacted_rounds} 个较早工具轮次。")
     return 0

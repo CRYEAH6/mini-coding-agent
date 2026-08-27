@@ -193,3 +193,35 @@ def test_successful_tool_resets_failure_count(tmp_path: Path) -> None:
     result = CodingAgent(client, ToolRegistry(tmp_path)).run("先失败再恢复")
 
     assert result.content == "已调整方案。"
+
+
+def test_agent_compacts_old_tool_rounds(tmp_path: Path) -> None:
+    responses = []
+    for index in range(3):
+        path = f"large-{index}.txt"
+        (tmp_path / path).write_text("x" * 700, encoding="utf-8")
+        responses.append(
+            _message(
+                tool_calls=[
+                    _tool_call(
+                        "read_file",
+                        f'{{"path": "{path}"}}',
+                        f"call-{index}",
+                    )
+                ]
+            )
+        )
+    responses.append(_message(content="读取完成。"))
+    events = []
+    agent = CodingAgent(
+        FakeClient(responses),
+        ToolRegistry(tmp_path),
+        max_context_chars=2_500,
+        event_handler=events.append,
+    )
+
+    result = agent.run("依次读取三个文件")
+
+    assert result.content == "读取完成。"
+    assert result.compacted_rounds >= 1
+    assert any(event.startswith("上下文已压缩") for event in events)

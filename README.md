@@ -35,6 +35,7 @@ cp .env.example .env
 - `DEEPSEEK_BASE_URL`：API 接口地址；
 - `DEEPSEEK_TIMEOUT_SECONDS`：单次请求超时时间；
 - `DEEPSEEK_MAX_RETRIES`：API 客户端最大重试次数。
+- `DEEPSEEK_MAX_CONTEXT_CHARS`：消息历史的近似字符预算，默认 200000。
 
 ## 运行
 
@@ -64,6 +65,8 @@ uv run mini-agent --workspace /path/to/target-project "修复失败的测试"
 6. 模型给出最终回答或达到终止条件后结束。
 
 除最大模型轮数外，Agent 还会检测无效循环：第 3 次完全相同的工具调用会被拦截并提示模型调整方案，继续重复则终止；工具连续失败 3 次会警告，达到 4 次则终止。任意成功工具调用都会重置连续失败计数。
+
+每次模型请求前，Agent 会估算消息历史的 JSON 字符数。超过预算时，只压缩最早的完整工具轮次，保留 system 指令、原始用户任务、最近两个工具轮次，以及包含工具名称、关键参数和成功状态的历史摘要。该方法不额外调用模型，也不会拆散 Tool Call 和对应 Tool Result。
 
 当前提供五个本地工具：
 

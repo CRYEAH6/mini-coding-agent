@@ -20,6 +20,7 @@ class Settings:
     base_url: str = "https://api.deepseek.com"
     timeout_seconds: float = 60.0
     max_retries: int = 2
+    max_context_chars: int = 200_000
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "Settings":
@@ -48,6 +49,13 @@ class Settings:
             environ.get("DEEPSEEK_MAX_RETRIES", str(cls.max_retries)),
             "DEEPSEEK_MAX_RETRIES",
         )
+        max_context_chars = _parse_positive_int(
+            environ.get(
+                "DEEPSEEK_MAX_CONTEXT_CHARS",
+                str(cls.max_context_chars),
+            ),
+            "DEEPSEEK_MAX_CONTEXT_CHARS",
+        )
 
         return cls(
             api_key=api_key,
@@ -55,6 +63,7 @@ class Settings:
             base_url=base_url,
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
+            max_context_chars=max_context_chars,
         )
 
 
@@ -77,4 +86,12 @@ def _parse_non_negative_int(raw_value: str, name: str) -> int:
         raise ConfigurationError(f"{name} 必须是整数。") from exc
     if value < 0:
         raise ConfigurationError(f"{name} 不能小于 0。")
+    return value
+
+
+def _parse_positive_int(raw_value: str, name: str) -> int:
+    """Parse a positive integer environment value."""
+    value = _parse_non_negative_int(raw_value, name)
+    if value == 0:
+        raise ConfigurationError(f"{name} 必须大于 0。")
     return value

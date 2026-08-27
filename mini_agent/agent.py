@@ -5,6 +5,7 @@ import json
 from typing import Any, Callable, Mapping, Optional
 
 from mini_agent.client import DeepSeekClient
+from mini_agent.context import ContextManager
 from mini_agent.tools import ToolRegistry, ToolResult
 
 
@@ -37,6 +38,7 @@ class AgentResult:
     content: str
     steps: int
     tool_calls: int
+    compacted_rounds: int
 
 
 EventHandler = Callable[[str], None]
@@ -51,6 +53,7 @@ class CodingAgent:
         tools: ToolRegistry,
         *,
         max_steps: int = DEFAULT_MAX_STEPS,
+        max_context_chars: int = 200_000,
         event_handler: Optional[EventHandler] = None,
     ) -> None:
         if max_steps <= 0:
@@ -58,6 +61,7 @@ class CodingAgent:
         self._client = client
         self._tools = tools
         self._max_steps = max_steps
+        self._context = ContextManager(max_context_chars)
         self._emit = event_handler or (lambda _: None)
 
     def run(self, task: str) -> AgentResult:
@@ -70,11 +74,21 @@ class CodingAgent:
             {"role": "user", "content": task.strip()},
         ]
         tool_call_count = 0
+        compacted_round_count = 0
         consecutive_failures = 0
         previous_fingerprint: Optional[str] = None
         repeated_call_count = 0
 
+        self._context.start(SYSTEM_PROMPT)
         for step in range(1, self._max_steps + 1):
+            compacted = self._context.prepare(messages)
+            messages = compacted.messages
+            if compacted.removed_rounds:
+                compacted_round_count += compacted.removed_rounds
+                self._emit(
+                    "上下文已压缩：移除 "
+                    f"{compacted.removed_rounds} 个较早工具轮次。"
+                )
             self._emit(f"[{step}/{self._max_steps}] 正在请求模型...")
             message = self._client.create_message(messages, self._tools.definitions)
             assistant_message = _serialize_assistant_message(message)
@@ -87,7 +101,12 @@ class CodingAgent:
                     raise RuntimeError(
                         "模型既没有返回工具调用，也没有返回最终文字。"
                     )
-                return AgentResult(content.strip(), step, tool_call_count)
+                return AgentResult(
+                    content.strip(),
+                    step,
+                    tool_call_count,
+                    compacted_round_count,
+                )
 
             for tool_call in tool_calls:
                 name = tool_call.function.name

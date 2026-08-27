@@ -13,6 +13,7 @@ def test_settings_load_required_key_and_defaults() -> None:
     assert settings.base_url == "https://api.deepseek.com"
     assert settings.timeout_seconds == 60.0
     assert settings.max_retries == 2
+    assert settings.max_context_chars == 200_000
 
 
 def test_settings_load_overrides() -> None:
@@ -23,6 +24,7 @@ def test_settings_load_overrides() -> None:
             "DEEPSEEK_BASE_URL": "https://example.com/",
             "DEEPSEEK_TIMEOUT_SECONDS": "30.5",
             "DEEPSEEK_MAX_RETRIES": "4",
+            "DEEPSEEK_MAX_CONTEXT_CHARS": "50000",
         }
     )
 
@@ -30,6 +32,7 @@ def test_settings_load_overrides() -> None:
     assert settings.base_url == "https://example.com"
     assert settings.timeout_seconds == 30.5
     assert settings.max_retries == 4
+    assert settings.max_context_chars == 50_000
 
 
 def test_settings_reject_missing_api_key() -> None:
@@ -44,6 +47,8 @@ def test_settings_reject_missing_api_key() -> None:
         ("DEEPSEEK_TIMEOUT_SECONDS", "not-a-number"),
         ("DEEPSEEK_MAX_RETRIES", "-1"),
         ("DEEPSEEK_MAX_RETRIES", "1.5"),
+        ("DEEPSEEK_MAX_CONTEXT_CHARS", "0"),
+        ("DEEPSEEK_MAX_CONTEXT_CHARS", "100.5"),
     ],
 )
 def test_settings_reject_invalid_numeric_values(name: str, value: str) -> None:
