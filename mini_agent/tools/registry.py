@@ -15,9 +15,17 @@ ToolHandler = Callable[..., ToolResult]
 class ToolRegistry:
     """Expose tool schemas and dispatch validated JSON arguments."""
 
-    def __init__(self, workspace: Union[str, Path]) -> None:
+    def __init__(
+        self,
+        workspace: Union[str, Path],
+        *,
+        allow_dangerous_commands: bool = False,
+    ) -> None:
         file_tools = FileTools(workspace)
-        shell_tool = ShellTool(workspace)
+        shell_tool = ShellTool(
+            workspace,
+            allow_dangerous_commands=allow_dangerous_commands,
+        )
         self._handlers: dict[str, ToolHandler] = {
             "list_files": file_tools.list_files,
             "read_file": file_tools.read_file,
@@ -145,7 +153,8 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
         "function": {
             "name": "run_command",
             "description": (
-                "在工作目录中执行一条 zsh 命令并返回退出码和输出。"
+                "在工作目录中执行一条 zsh 命令并返回退出码和输出；"
+                "高风险命令默认会被阻止。"
             ),
             "parameters": {
                 "type": "object",

@@ -34,3 +34,16 @@ def test_run_command_rejects_invalid_timeout(tmp_path: Path) -> None:
 
     assert not result.success
     assert "必须在" in result.content
+
+
+def test_run_command_blocks_dangerous_command_before_execution(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "keep.txt"
+    target.write_text("keep", encoding="utf-8")
+
+    result = ShellTool(tmp_path).run_command("rm keep.txt")
+
+    assert not result.success
+    assert "安全策略阻止" in result.content
+    assert target.exists()

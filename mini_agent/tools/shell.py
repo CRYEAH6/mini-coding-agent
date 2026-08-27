@@ -7,6 +7,7 @@ import subprocess
 from typing import Union
 
 from mini_agent.tools.result import ToolResult
+from mini_agent.tools.security import CommandPolicy
 
 
 DEFAULT_TIMEOUT_SECONDS = 30.0
@@ -17,11 +18,17 @@ MAX_OUTPUT_CHARS = 30_000
 class ShellTool:
     """Execute shell commands with time and output limits."""
 
-    def __init__(self, workspace: Union[str, Path]) -> None:
+    def __init__(
+        self,
+        workspace: Union[str, Path],
+        *,
+        allow_dangerous_commands: bool = False,
+    ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         if not resolved.is_dir():
             raise ValueError(f"工作目录不存在或不是目录：{resolved}")
         self._workspace = resolved
+        self._policy = CommandPolicy(allow_dangerous_commands)
 
     def run_command(
         self,
@@ -40,6 +47,10 @@ class ShellTool:
                 False,
                 f"timeout_seconds 必须在 0 到 {MAX_TIMEOUT_SECONDS} 之间。",
             )
+
+        decision = self._policy.check(command)
+        if not decision.allowed:
+            return ToolResult(False, f"命令被安全策略阻止：{decision.reason}")
 
         process = subprocess.Popen(
             ["/bin/zsh", "-lc", command],

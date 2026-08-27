@@ -30,6 +30,11 @@ def build_parser() -> argparse.ArgumentParser:
         default=20,
         help="最大模型调用轮数，默认为 20。",
     )
+    parser.add_argument(
+        "--allow-dangerous-commands",
+        action="store_true",
+        help="允许绕过高风险命令拦截；仅在可信环境中使用。",
+    )
     return parser
 
 
@@ -40,7 +45,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         settings = Settings.from_env()
-        tools = ToolRegistry(Path(args.workspace))
+        tools = ToolRegistry(
+            Path(args.workspace),
+            allow_dangerous_commands=args.allow_dangerous_commands,
+        )
         client = DeepSeekClient(settings)
         agent = CodingAgent(
             client,
