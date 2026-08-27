@@ -7,7 +7,12 @@ from typing import Any, Mapping, Sequence
 
 import pytest
 
-from mini_agent.agent import CodingAgent, StepLimitError, ToolLoopError
+from mini_agent.agent import (
+    CodingAgent,
+    StepLimitError,
+    ToolLoopError,
+    _describe_tool_call,
+)
 from mini_agent.tools import ToolRegistry
 
 
@@ -68,7 +73,7 @@ def test_agent_executes_tool_and_returns_final_response(tmp_path: Path) -> None:
     assert result.steps == 2
     assert result.tool_calls == 1
     assert (tmp_path / "answer.txt").read_text(encoding="utf-8") == "42"
-    assert "调用工具：write_file" in events
+    assert any(event.startswith("[工具] write_file") for event in events)
 
     second_request = client.requests[1]
     assert [message["role"] for message in second_request] == [
@@ -132,8 +137,8 @@ def test_agent_emits_compact_tool_error(tmp_path: Path) -> None:
 
     agent.run("读取文件")
 
-    assert "工具结果：失败" in events
-    assert any(event.startswith("工具错误：路径不存在") for event in events)
+    assert "[结果] 失败" in events
+    assert any(event.startswith("[错误] 路径不存在") for event in events)
 
 
 def test_agent_stops_repeated_identical_tool_calls(tmp_path: Path) -> None:
@@ -224,4 +229,21 @@ def test_agent_compacts_old_tool_rounds(tmp_path: Path) -> None:
 
     assert result.content == "读取完成。"
     assert result.compacted_rounds >= 1
-    assert any(event.startswith("上下文已压缩") for event in events)
+    assert any(event.startswith("[上下文] 已压缩") for event in events)
+
+
+def test_tool_description_does_not_echo_sensitive_content() -> None:
+    command_description = _describe_tool_call(
+        "run_command",
+        '{"command": "python3 deploy.py --token private-value"}',
+    )
+    write_description = _describe_tool_call(
+        "write_file",
+        '{"path": "config.py", "content": "private-value"}',
+    )
+
+    assert "program=python3" in command_description
+    assert "private-value" not in command_description
+    assert "path=config.py" in write_description
+    assert "content_chars=13" in write_description
+    assert "private-value" not in write_description

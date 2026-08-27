@@ -2,6 +2,8 @@
 
 from dataclasses import dataclass
 import json
+from pathlib import Path
+import shlex
 from typing import Any, Callable, Mapping, Optional
 
 from mini_agent.client import DeepSeekClient
@@ -87,10 +89,10 @@ class CodingAgent:
             if compacted.removed_rounds:
                 compacted_round_count += compacted.removed_rounds
                 self._emit(
-                    "上下文已压缩：移除 "
+                    "[上下文] 已压缩：移除 "
                     f"{compacted.removed_rounds} 个较早工具轮次。"
                 )
-            self._emit(f"[{step}/{self._max_steps}] 正在请求模型...")
+            self._emit(f"[模型 {step}/{self._max_steps}] 正在生成下一步...")
             message = self._client.create_message(messages, self._tools.definitions)
             assistant_message = _serialize_assistant_message(message)
             messages.append(assistant_message)
@@ -111,7 +113,11 @@ class CodingAgent:
 
             for tool_call in tool_calls:
                 name = tool_call.function.name
-                self._emit(f"调用工具：{name}")
+                description = _describe_tool_call(
+                    name,
+                    tool_call.function.arguments,
+                )
+                self._emit(f"[工具] {name}{description}")
                 fingerprint = _tool_fingerprint(
                     name,
                     tool_call.function.arguments,
@@ -157,9 +163,9 @@ class CodingAgent:
                         )
 
                 status = "成功" if result.success else "失败"
-                self._emit(f"工具结果：{status}")
+                self._emit(f"[结果] {status}")
                 if not result.success:
-                    self._emit(f"工具错误：{_preview(result.content)}")
+                    self._emit(f"[错误] {_preview(result.content)}")
                 messages.append(
                     {
                         "role": "tool",
@@ -222,3 +228,48 @@ def _tool_fingerprint(name: str, arguments: str) -> str:
     except (json.JSONDecodeError, TypeError):
         normalized = arguments
     return f"{name}:{normalized}"
+
+
+def _describe_tool_call(name: str, arguments: str) -> str:
+    """Return a concise tool description without exposing full content."""
+    try:
+        parsed = json.loads(arguments)
+    except (json.JSONDecodeError, TypeError):
+        return "（参数无法解析）"
+    if not isinstance(parsed, dict):
+        return "（参数不是对象）"
+
+    path = parsed.get("path")
+    if name in {"list_files", "read_file"}:
+        return f"（path={path or '.'}）"
+    if name == "write_file":
+        content = parsed.get("content")
+        length = len(content) if isinstance(content, str) else "?"
+        return f"（path={path}，content_chars={length}）"
+    if name == "replace_in_file":
+        old_text = parsed.get("old_text")
+        new_text = parsed.get("new_text")
+        old_length = len(old_text) if isinstance(old_text, str) else "?"
+        new_length = len(new_text) if isinstance(new_text, str) else "?"
+        return (
+            f"（path={path}，old_chars={old_length}，"
+            f"new_chars={new_length}）"
+        )
+    if name == "run_command":
+        executable = _command_executable(parsed.get("command"))
+        timeout = parsed.get("timeout_seconds", "default")
+        return f"（program={executable}，timeout={timeout}）"
+    return ""
+
+
+def _command_executable(command: Any) -> str:
+    """Extract only the executable name to avoid echoing secret arguments."""
+    if not isinstance(command, str):
+        return "unknown"
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return "unknown"
+    if not tokens:
+        return "unknown"
+    return Path(tokens[0]).name

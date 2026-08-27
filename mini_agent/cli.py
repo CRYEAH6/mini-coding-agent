@@ -2,6 +2,7 @@
 
 import argparse
 from pathlib import Path
+import time
 from typing import Optional, Sequence
 
 from openai import APIError
@@ -45,8 +46,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
 
     try:
         settings = Settings.from_env()
+        workspace = Path(args.workspace).expanduser().resolve()
         tools = ToolRegistry(
-            Path(args.workspace),
+            workspace,
             allow_dangerous_commands=args.allow_dangerous_commands,
         )
         client = DeepSeekClient(settings)
@@ -57,6 +59,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_context_chars=settings.max_context_chars,
             event_handler=print,
         )
+        _print_startup(
+            model=settings.model,
+            workspace=workspace,
+            max_steps=args.max_steps,
+            max_context_chars=settings.max_context_chars,
+            dangerous_commands=args.allow_dangerous_commands,
+        )
+        started_at = time.monotonic()
         result = agent.run(task)
     except (ConfigurationError, ValueError) as exc:
         print(f"配置错误：{exc}")
@@ -74,9 +84,31 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print("\n任务已由用户中断。")
         return 130
 
-    print("\n任务完成：")
+    elapsed = time.monotonic() - started_at
+    print("\n[完成] 任务已结束")
     print(result.content)
-    print(f"\n共调用模型 {result.steps} 次，执行工具 {result.tool_calls} 次。")
+    print(
+        f"\n[统计] 模型调用 {result.steps} 次，工具执行 "
+        f"{result.tool_calls} 次，耗时 {elapsed:.1f} 秒。"
+    )
     if result.compacted_rounds:
-        print(f"上下文压缩了 {result.compacted_rounds} 个较早工具轮次。")
+        print(f"[统计] 上下文压缩 {result.compacted_rounds} 个较早工具轮次。")
     return 0
+
+
+def _print_startup(
+    *,
+    model: str,
+    workspace: Path,
+    max_steps: int,
+    max_context_chars: int,
+    dangerous_commands: bool,
+) -> None:
+    """Print a compact, secret-free run configuration summary."""
+    safety = "高风险命令已允许" if dangerous_commands else "高风险命令默认拦截"
+    print("Mini Coding Agent")
+    print(f"模型：{model}")
+    print(f"工作目录：{workspace}")
+    print(f"最大步骤：{max_steps}")
+    print(f"上下文预算：{max_context_chars} 字符")
+    print(f"安全模式：{safety}\n")
