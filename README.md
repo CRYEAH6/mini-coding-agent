@@ -9,6 +9,14 @@
 - Python 3.9 或更高版本
 - DeepSeek API Key
 
+## 安装
+
+项目使用 `uv` 管理虚拟环境和依赖：
+
+```bash
+uv sync --extra dev
+```
+
 ## 凭据安全
 
 API Key 必须通过 `DEEPSEEK_API_KEY` 环境变量提供。不要把真实 API Key 写入代码或提交到仓库。
@@ -28,6 +36,53 @@ cp .env.example .env
 - `DEEPSEEK_TIMEOUT_SECONDS`：单次请求超时时间；
 - `DEEPSEEK_MAX_RETRIES`：API 客户端最大重试次数。
 
+## 运行
+
+在需要 Agent 操作的项目目录中运行：
+
+```bash
+uv run --project /path/to/mini-coding-agent mini-agent \
+  --workspace . \
+  "检查项目并完成指定的编程任务"
+```
+
+也可以先进入本仓库，再明确指定目标工作目录：
+
+```bash
+uv run mini-agent --workspace /path/to/target-project "修复失败的测试"
+```
+
+使用 `--max-steps` 可以限制单次任务的最大模型调用轮数，默认值为 20。
+
+## 核心流程
+
+1. 命令行接收用户任务和工作目录；
+2. Agent 将任务、历史消息和工具定义发送给 DeepSeek；
+3. 模型返回工具调用或最终回答；
+4. 本地程序校验参数并执行文件或命令工具；
+5. 工具结果加入对话历史，再次请求模型；
+6. 模型给出最终回答或达到终止条件后结束。
+
+当前提供五个本地工具：
+
+- `list_files`：列出目录内容；
+- `read_file`：读取 UTF-8 文本文件；
+- `write_file`：创建或完整写入文件；
+- `replace_in_file`：精确替换已有文本；
+- `run_command`：执行带超时和输出限制的 zsh 命令。
+
+文件工具只能访问指定工作目录。命令工具会固定工作目录并限制超时，但不等同于完整的系统沙箱，运行前应确认目标目录中没有敏感文件。
+
+## 测试
+
+运行本地自动化测试：
+
+```bash
+uv run pytest -q
+```
+
+普通测试使用假模型响应，不需要 API Key，也不会消耗 API 额度。真实 API 会作为单独的端到端测试执行。
+
 ## 当前进度
 
 - 已建立 Python 项目结构；
@@ -35,4 +90,6 @@ cp .env.example .env
 - 已提供命令行启动入口；
 - 已加入基础自动化测试；
 - 已实现配置读取和 DeepSeek API 客户端；
-- Agent 循环和本地工具正在开发中。
+- 已实现文件工具、命令工具和统一工具注册；
+- 已实现 Agent 主循环和命令行入口；
+- 已通过 DeepSeek API 真实端到端验证：创建 Python 文件、执行并检查输出。
