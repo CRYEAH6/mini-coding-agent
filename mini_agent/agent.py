@@ -1,14 +1,17 @@
 """Core model-tool loop for the coding agent."""
 
 from dataclasses import dataclass
+import json
 from typing import Any, Callable, Mapping, Optional
 
 from mini_agent.client import DeepSeekClient
-from mini_agent.tools import ToolRegistry
+from mini_agent.tools import ToolRegistry, ToolResult
 
 
 DEFAULT_MAX_STEPS = 20
 EVENT_PREVIEW_CHARS = 500
+REPEAT_WARNING_THRESHOLD = 3
+MAX_CONSECUTIVE_FAILURES = 4
 
 SYSTEM_PROMPT = """你是一个在本地项目中工作的编程智能体。
 请先理解任务和现有代码，再选择合适的工具完成修改。
@@ -21,6 +24,10 @@ SYSTEM_PROMPT = """你是一个在本地项目中工作的编程智能体。
 
 class StepLimitError(RuntimeError):
     """Raised when the agent exceeds its configured model-step limit."""
+
+
+class ToolLoopError(RuntimeError):
+    """Raised when repeated or failing tool calls form an invalid loop."""
 
 
 @dataclass(frozen=True)
@@ -63,6 +70,9 @@ class CodingAgent:
             {"role": "user", "content": task.strip()},
         ]
         tool_call_count = 0
+        consecutive_failures = 0
+        previous_fingerprint: Optional[str] = None
+        repeated_call_count = 0
 
         for step in range(1, self._max_steps + 1):
             self._emit(f"[{step}/{self._max_steps}] 正在请求模型...")
@@ -82,7 +92,50 @@ class CodingAgent:
             for tool_call in tool_calls:
                 name = tool_call.function.name
                 self._emit(f"调用工具：{name}")
-                result = self._tools.execute(name, tool_call.function.arguments)
+                fingerprint = _tool_fingerprint(
+                    name,
+                    tool_call.function.arguments,
+                )
+                if fingerprint == previous_fingerprint:
+                    repeated_call_count += 1
+                else:
+                    previous_fingerprint = fingerprint
+                    repeated_call_count = 1
+
+                terminate_reason = None
+                if repeated_call_count > REPEAT_WARNING_THRESHOLD:
+                    result = ToolResult(
+                        False,
+                        "检测到完全相同的工具调用持续重复，任务已终止。",
+                    )
+                    terminate_reason = "模型持续重复完全相同的工具调用。"
+                elif repeated_call_count == REPEAT_WARNING_THRESHOLD:
+                    result = ToolResult(
+                        False,
+                        "检测到第 3 次相同工具调用，本次未执行。"
+                        "请调整参数或方案。",
+                    )
+                else:
+                    result = self._tools.execute(
+                        name,
+                        tool_call.function.arguments,
+                    )
+
+                if result.success:
+                    consecutive_failures = 0
+                else:
+                    consecutive_failures += 1
+                    if consecutive_failures == MAX_CONSECUTIVE_FAILURES - 1:
+                        result = ToolResult(
+                            False,
+                            f"{result.content}\n警告：工具已连续失败 "
+                            f"{consecutive_failures} 次，请调整方案。",
+                        )
+                    elif consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                        terminate_reason = (
+                            f"工具连续失败 {consecutive_failures} 次。"
+                        )
+
                 status = "成功" if result.success else "失败"
                 self._emit(f"工具结果：{status}")
                 if not result.success:
@@ -95,6 +148,8 @@ class CodingAgent:
                     }
                 )
                 tool_call_count += 1
+                if terminate_reason is not None:
+                    raise ToolLoopError(terminate_reason)
 
         raise StepLimitError(
             f"Agent 已达到最大步骤数 {self._max_steps}，任务被终止。"
@@ -132,3 +187,18 @@ def _preview(content: str) -> str:
     if len(content) <= EVENT_PREVIEW_CHARS:
         return content
     return f"{content[:EVENT_PREVIEW_CHARS]}..."
+
+
+def _tool_fingerprint(name: str, arguments: str) -> str:
+    """Create a stable identity for semantically equal tool calls."""
+    try:
+        parsed = json.loads(arguments)
+        normalized = json.dumps(
+            parsed,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+    except (json.JSONDecodeError, TypeError):
+        normalized = arguments
+    return f"{name}:{normalized}"

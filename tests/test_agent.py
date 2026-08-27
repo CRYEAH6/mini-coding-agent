@@ -7,7 +7,7 @@ from typing import Any, Mapping, Sequence
 
 import pytest
 
-from mini_agent.agent import CodingAgent, StepLimitError
+from mini_agent.agent import CodingAgent, StepLimitError, ToolLoopError
 from mini_agent.tools import ToolRegistry
 
 
@@ -134,3 +134,62 @@ def test_agent_emits_compact_tool_error(tmp_path: Path) -> None:
 
     assert "工具结果：失败" in events
     assert any(event.startswith("工具错误：路径不存在") for event in events)
+
+
+def test_agent_stops_repeated_identical_tool_calls(tmp_path: Path) -> None:
+    responses = [
+        _message(tool_calls=[_tool_call("list_files", "{}", f"call-{index}")])
+        for index in range(4)
+    ]
+    client = FakeClient(responses)
+    agent = CodingAgent(client, ToolRegistry(tmp_path))
+
+    with pytest.raises(ToolLoopError, match="重复"):
+        agent.run("重复查看目录")
+
+    third_request_result = client.requests[3][-1]["content"]
+    assert "第 3 次相同工具调用" in third_request_result
+
+
+def test_agent_stops_after_four_consecutive_failures(tmp_path: Path) -> None:
+    responses = [
+        _message(
+            tool_calls=[
+                _tool_call(
+                    "read_file",
+                    f'{{"path": "missing-{index}.txt"}}',
+                    f"call-{index}",
+                )
+            ]
+        )
+        for index in range(4)
+    ]
+    agent = CodingAgent(FakeClient(responses), ToolRegistry(tmp_path))
+
+    with pytest.raises(ToolLoopError, match="连续失败 4 次"):
+        agent.run("持续读取不存在的文件")
+
+
+def test_successful_tool_resets_failure_count(tmp_path: Path) -> None:
+    failing_calls = [
+        _message(
+            tool_calls=[
+                _tool_call(
+                    "read_file",
+                    f'{{"path": "missing-{index}.txt"}}',
+                    f"call-{index}",
+                )
+            ]
+        )
+        for index in range(3)
+    ]
+    success = _message(
+        tool_calls=[_tool_call("list_files", "{}", "call-success")]
+    )
+    client = FakeClient(
+        [*failing_calls, success, _message(content="已调整方案。")]
+    )
+
+    result = CodingAgent(client, ToolRegistry(tmp_path)).run("先失败再恢复")
+
+    assert result.content == "已调整方案。"
