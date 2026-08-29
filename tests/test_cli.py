@@ -5,8 +5,9 @@ from unittest.mock import Mock
 
 import mini_agent.cli as cli_module
 from mini_agent.agent import AgentResult
-from mini_agent.cli import _print_startup, build_parser, main
+from mini_agent.cli import _confirm_tool_action, _print_startup, build_parser, main
 from mini_agent.config import ConfigurationError, Settings
+from mini_agent.tools.approval import ApprovalRequest
 
 
 def test_parser_reads_workspace_and_step_limit() -> None:
@@ -118,3 +119,36 @@ def test_interactive_mode_keeps_accepting_tasks_until_exit(
     assert "第二轮完成" in output
     assert "已清空对话历史" in output
     assert "会话已结束" in output
+
+
+def test_confirmation_accepts_explicit_yes(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("builtins.input", Mock(return_value="y"))
+    request = ApprovalRequest(
+        tool_name="run_command",
+        action="执行敏感命令",
+        details="uv add requests",
+        reason="该命令会安装项目依赖。",
+    )
+
+    allowed = _confirm_tool_action(request)
+
+    output = capsys.readouterr().out
+    assert allowed
+    assert "uv add requests" in output
+    assert "已允许" in output
+
+
+def test_confirmation_defaults_to_denial(monkeypatch, capsys) -> None:
+    monkeypatch.setattr("builtins.input", Mock(return_value=""))
+    request = ApprovalRequest(
+        tool_name="run_command",
+        action="执行敏感命令",
+        details="git push origin main",
+        reason="该命令会与远程仓库交互。",
+    )
+
+    allowed = _confirm_tool_action(request)
+
+    output = capsys.readouterr().out
+    assert not allowed
+    assert "已拒绝" in output

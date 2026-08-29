@@ -11,6 +11,7 @@ from mini_agent.agent import AgentResult, CodingAgent, StepLimitError
 from mini_agent.client import DeepSeekClient
 from mini_agent.config import ConfigurationError, Settings
 from mini_agent.tools import ToolRegistry
+from mini_agent.tools.approval import ApprovalRequest
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -33,7 +34,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--allow-dangerous-commands",
         action="store_true",
-        help="允许绕过高风险命令拦截；仅在可信环境中使用。",
+        help="允许高风险命令进入人工确认流程；仅在可信环境中使用。",
     )
     return parser
 
@@ -49,6 +50,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         tools = ToolRegistry(
             workspace,
             allow_dangerous_commands=args.allow_dangerous_commands,
+            approval_handler=_confirm_tool_action,
         )
         client = DeepSeekClient(settings)
         agent = CodingAgent(
@@ -187,6 +189,23 @@ def _print_interactive_help() -> None:
     print("  /quit  结束会话")
 
 
+def _confirm_tool_action(request: ApprovalRequest) -> bool:
+    """Show a sensitive action and return the user's explicit decision."""
+    print(f"[需要确认] {request.action}")
+    print(f"原因：{request.reason}")
+    print(f"具体内容：{request.details}")
+    try:
+        answer = input("是否允许？[y/N] ").strip().lower()
+    except EOFError:
+        print("[确认] 未收到输入，已拒绝。")
+        return False
+
+    allowed = answer in {"y", "yes", "是", "允许"}
+    status = "已允许。" if allowed else "已拒绝。"
+    print(f"[确认] {status}")
+    return allowed
+
+
 def _print_startup(
     *,
     model: str,
@@ -196,7 +215,11 @@ def _print_startup(
     dangerous_commands: bool,
 ) -> None:
     """Print a compact, secret-free run configuration summary."""
-    safety = "高风险命令已允许" if dangerous_commands else "高风险命令默认拦截"
+    safety = (
+        "高风险命令需人工确认"
+        if dangerous_commands
+        else "高风险命令默认拦截"
+    )
     print("Mini Coding Agent")
     print(f"模型：{model}")
     print(f"工作目录：{workspace}")

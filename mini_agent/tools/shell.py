@@ -4,8 +4,9 @@ import os
 from pathlib import Path
 import signal
 import subprocess
-from typing import Union
+from typing import Optional, Union
 
+from mini_agent.tools.approval import ApprovalHandler, ApprovalRequest
 from mini_agent.tools.result import ToolResult
 from mini_agent.tools.security import CommandPolicy
 
@@ -23,12 +24,14 @@ class ShellTool:
         workspace: Union[str, Path],
         *,
         allow_dangerous_commands: bool = False,
+        approval_handler: Optional[ApprovalHandler] = None,
     ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         if not resolved.is_dir():
             raise ValueError(f"工作目录不存在或不是目录：{resolved}")
         self._workspace = resolved
         self._policy = CommandPolicy(allow_dangerous_commands)
+        self._request_approval = approval_handler
 
     def run_command(
         self,
@@ -51,6 +54,20 @@ class ShellTool:
         decision = self._policy.check(command)
         if not decision.allowed:
             return ToolResult(False, f"命令被安全策略阻止：{decision.reason}")
+        if decision.requires_approval:
+            request = ApprovalRequest(
+                tool_name="run_command",
+                action="执行需授权命令",
+                details=command,
+                reason=decision.reason,
+            )
+            if self._request_approval is None:
+                return ToolResult(
+                    False,
+                    "该命令需要用户确认，但当前运行方式未提供确认入口。",
+                )
+            if not self._request_approval(request):
+                return ToolResult(False, "用户拒绝执行该命令。")
 
         process = subprocess.Popen(
             ["/bin/zsh", "-lc", command],

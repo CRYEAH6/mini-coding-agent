@@ -2,8 +2,9 @@
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence, Union
+from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
+from mini_agent.tools.approval import ApprovalHandler
 from mini_agent.tools.filesystem import FileTools
 from mini_agent.tools.result import ToolResult
 from mini_agent.tools.shell import ShellTool
@@ -20,11 +21,13 @@ class ToolRegistry:
         workspace: Union[str, Path],
         *,
         allow_dangerous_commands: bool = False,
+        approval_handler: Optional[ApprovalHandler] = None,
     ) -> None:
         file_tools = FileTools(workspace)
         shell_tool = ShellTool(
             workspace,
             allow_dangerous_commands=allow_dangerous_commands,
+            approval_handler=approval_handler,
         )
         self._handlers: dict[str, ToolHandler] = {
             "list_files": file_tools.list_files,

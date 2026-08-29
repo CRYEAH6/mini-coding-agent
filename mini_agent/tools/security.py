@@ -11,6 +11,7 @@ class CommandDecision:
 
     allowed: bool
     reason: str = ""
+    requires_approval: bool = False
 
 
 Rule = Tuple[Pattern[str], str]
@@ -94,6 +95,68 @@ DANGEROUS_RULES: Sequence[Rule] = (
     ),
 )
 
+SENSITIVE_RULES: Sequence[Rule] = (
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?python(?:3(?:\.\d+)?)?\s+-m\s+"
+            r"pip\s+(?:install|uninstall)\b",
+            re.IGNORECASE,
+        ),
+        "该命令会安装、卸载或同步 Python 项目依赖。",
+    ),
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?pip(?:3)?\s+"
+            r"(?:install|uninstall)\b",
+            re.IGNORECASE,
+        ),
+        "该命令会安装、卸载或同步 Python 项目依赖。",
+    ),
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?uv\s+"
+            r"(?:add|remove|sync|pip\s+(?:install|uninstall))\b",
+            re.IGNORECASE,
+        ),
+        "该命令会安装、卸载或同步 Python 项目依赖。",
+    ),
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?(?:npm|pnpm|yarn|bun)\s+"
+            r"(?:install|add|remove|uninstall|update|upgrade)\b",
+            re.IGNORECASE,
+        ),
+        "该命令会更改 JavaScript 项目依赖。",
+    ),
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?(?:brew|apt(?:-get)?|dnf|yum)\s+"
+            r"(?:install|remove|uninstall|upgrade)\b",
+            re.IGNORECASE,
+        ),
+        "该命令会更改系统级软件包。",
+    ),
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?(?:curl|wget|ssh|scp|sftp)\b",
+            re.IGNORECASE,
+        ),
+        "该命令会访问外部网络或远程主机。",
+    ),
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?git\b[^;&|\n]*\b"
+            r"(?:commit|push|pull|fetch|clone)\b",
+            re.IGNORECASE,
+        ),
+        "该命令会创建 Git 历史或与远程仓库交互。",
+    ),
+    (
+        re.compile(rf"{COMMAND_START}(?:\S*/)?chmod\b", re.IGNORECASE),
+        "该命令会修改文件权限。",
+    ),
+)
+
 
 class CommandPolicy:
     """Block recognizable high-risk commands unless explicitly disabled."""
@@ -103,9 +166,12 @@ class CommandPolicy:
 
     def check(self, command: str) -> CommandDecision:
         """Return the first matching policy decision for a command."""
-        if self._allow_dangerous_commands:
-            return CommandDecision(True)
         for pattern, reason in DANGEROUS_RULES:
             if pattern.search(command):
-                return CommandDecision(False, reason)
+                if not self._allow_dangerous_commands:
+                    return CommandDecision(False, reason)
+                return CommandDecision(True, reason, requires_approval=True)
+        for pattern, reason in SENSITIVE_RULES:
+            if pattern.search(command):
+                return CommandDecision(True, reason, requires_approval=True)
         return CommandDecision(True)

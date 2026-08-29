@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from unittest.mock import Mock
 
 from mini_agent.tools.registry import ToolRegistry
 
@@ -69,3 +70,67 @@ def test_registry_rejects_wrong_argument_type(tmp_path: Path) -> None:
 
     assert not result.success
     assert "content 必须是字符串" in result.content
+
+
+def test_registry_executes_sensitive_command_after_approval(tmp_path: Path) -> None:
+    approval_handler = Mock(return_value=True)
+    registry = ToolRegistry(tmp_path, approval_handler=approval_handler)
+
+    result = registry.execute("run_command", '{"command": "curl --version"}')
+
+    assert result.success
+    request = approval_handler.call_args.args[0]
+    assert request.tool_name == "run_command"
+    assert request.details == "curl --version"
+    assert "外部网络" in request.reason
+
+
+def test_registry_does_not_execute_sensitive_command_when_denied(
+    tmp_path: Path,
+) -> None:
+    approval_handler = Mock(return_value=False)
+    registry = ToolRegistry(tmp_path, approval_handler=approval_handler)
+
+    result = registry.execute("run_command", '{"command": "curl --version"}')
+
+    assert not result.success
+    assert "用户拒绝" in result.content
+    approval_handler.assert_called_once()
+
+
+def test_registry_reports_missing_approval_entry(tmp_path: Path) -> None:
+    registry = ToolRegistry(tmp_path)
+
+    result = registry.execute("run_command", '{"command": "curl --version"}')
+
+    assert not result.success
+    assert "未提供确认入口" in result.content
+
+
+def test_registry_runs_normal_command_without_approval(tmp_path: Path) -> None:
+    approval_handler = Mock(return_value=False)
+    registry = ToolRegistry(tmp_path, approval_handler=approval_handler)
+
+    result = registry.execute(
+        "run_command",
+        '{"command": "python3 -c \\"print(42)\\""}',
+    )
+
+    assert result.success
+    assert "42" in result.content
+    approval_handler.assert_not_called()
+
+
+def test_dangerous_override_still_requires_approval(tmp_path: Path) -> None:
+    approval_handler = Mock(return_value=False)
+    registry = ToolRegistry(
+        tmp_path,
+        allow_dangerous_commands=True,
+        approval_handler=approval_handler,
+    )
+
+    result = registry.execute("run_command", '{"command": "rm old.txt"}')
+
+    assert not result.success
+    assert "用户拒绝" in result.content
+    approval_handler.assert_called_once()
