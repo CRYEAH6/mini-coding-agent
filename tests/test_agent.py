@@ -127,6 +127,29 @@ def test_agent_keeps_history_across_interactive_turns(tmp_path: Path) -> None:
     assert client.requests[1][-1]["content"] == "再增加暂停功能"
 
 
+def test_agent_exports_and_restores_persistent_session(tmp_path: Path) -> None:
+    first_agent = CodingAgent(
+        FakeClient([_message(content="第一轮完成")]),
+        ToolRegistry(tmp_path),
+    )
+    first_agent.run_turn("创建项目")
+    state = first_agent.export_session()
+    second_client = FakeClient([_message(content="继续完成")])
+    second_agent = CodingAgent(second_client, ToolRegistry(tmp_path))
+
+    second_agent.restore_session(state["messages"], state["context"])
+    second_agent.run_turn("增加功能")
+
+    assert [message["role"] for message in second_client.requests[0]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert second_client.requests[0][-3]["content"] == "创建项目"
+    assert second_client.requests[0][-2]["content"] == "第一轮完成"
+
+
 def test_agent_forwards_streamed_text_to_handler(tmp_path: Path) -> None:
     chunks = []
     agent = CodingAgent(

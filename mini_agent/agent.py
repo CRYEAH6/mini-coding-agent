@@ -1,13 +1,14 @@
 """Core model-tool loop for the coding agent."""
 
+from copy import deepcopy
 from dataclasses import dataclass
 import json
 from pathlib import Path
 import shlex
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 from mini_agent.client import DeepSeekClient, TextHandler
-from mini_agent.context import ContextManager
+from mini_agent.context import ContextManager, validate_history
 from mini_agent.tools import ToolRegistry, ToolResult
 
 
@@ -85,6 +86,27 @@ class CodingAgent:
         """Start a fresh conversation while keeping tools and configuration."""
         self._messages = [{"role": "system", "content": SYSTEM_PROMPT}]
         self._context.start(SYSTEM_PROMPT)
+
+    def export_session(self) -> Mapping[str, Any]:
+        """Export JSON-compatible conversation and compaction state."""
+        return {
+            "messages": deepcopy(self._messages[1:]),
+            "context": dict(self._context.export_state()),
+        }
+
+    def restore_session(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        context_state: Mapping[str, Any],
+    ) -> None:
+        """Restore a previously validated persistent conversation."""
+        restored = deepcopy(list(messages))
+        validate_history(restored)
+        self._context.restore(SYSTEM_PROMPT, context_state)
+        self._messages = [
+            {"role": "system", "content": self._context.system_content},
+            *restored,
+        ]
 
     def run_turn(self, task: str) -> AgentResult:
         """Append one user request and continue the current conversation."""

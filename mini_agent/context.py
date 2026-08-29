@@ -49,6 +49,37 @@ class ContextManager:
         self._summary_lines.clear()
         self._omitted_summary_lines = 0
 
+    @property
+    def system_content(self) -> str:
+        """Return the current system prompt including compacted summaries."""
+        return self._system_content()
+
+    def export_state(self) -> Mapping[str, Any]:
+        """Return JSON-compatible compaction state for session persistence."""
+        return {
+            "summary_lines": list(self._summary_lines),
+            "omitted_summary_lines": self._omitted_summary_lines,
+        }
+
+    def restore(self, system_prompt: str, state: Mapping[str, Any]) -> None:
+        """Restore validated compaction state for a persisted session."""
+        if not isinstance(state, Mapping):
+            raise ContextLimitError("会话中的上下文状态必须是对象。")
+        summary_lines = state.get("summary_lines", [])
+        omitted = state.get("omitted_summary_lines", 0)
+        if not isinstance(summary_lines, list) or not all(
+            isinstance(line, str) for line in summary_lines
+        ):
+            raise ContextLimitError("会话中的上下文摘要格式无效。")
+        if len(summary_lines) > MAX_SUMMARY_LINES:
+            raise ContextLimitError("会话中的上下文摘要条目过多。")
+        if isinstance(omitted, bool) or not isinstance(omitted, int) or omitted < 0:
+            raise ContextLimitError("会话中的上下文省略计数无效。")
+
+        self._base_system_prompt = system_prompt
+        self._summary_lines = list(summary_lines)
+        self._omitted_summary_lines = omitted
+
     def prepare(
         self,
         messages: Sequence[Mapping[str, Any]],
@@ -227,6 +258,13 @@ def _split_turns(
     if not turns:
         raise ContextLimitError("上下文缺少必要的 user 消息。")
     return turns
+
+
+def validate_history(history: Sequence[Mapping[str, Any]]) -> None:
+    """Validate persisted non-system messages without modifying them."""
+    if not history:
+        return
+    _split_turns(history)
 
 
 def _split_turn_units(

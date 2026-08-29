@@ -4,9 +4,11 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import mini_agent.cli as cli_module
+import pytest
 from mini_agent.agent import AgentResult
 from mini_agent.cli import _confirm_tool_action, _print_startup, build_parser, main
 from mini_agent.config import ConfigurationError, Settings
+from mini_agent.session import SessionError, SessionStore
 from mini_agent.tools.approval import ApprovalRequest
 
 
@@ -62,6 +64,7 @@ def test_main_reports_api_error(monkeypatch, capsys, tmp_path: Path) -> None:
         pass
 
     monkeypatch.setattr(cli_module, "APIError", FakeAPIError)
+    monkeypatch.setenv("MINI_AGENT_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setattr(
         Settings,
         "from_env",
@@ -88,6 +91,7 @@ def test_interactive_mode_keeps_accepting_tasks_until_exit(
     capsys,
     tmp_path: Path,
 ) -> None:
+    monkeypatch.setenv("MINI_AGENT_SESSION_DIR", str(tmp_path / "sessions"))
     monkeypatch.setattr(
         Settings,
         "from_env",
@@ -117,7 +121,8 @@ def test_interactive_mode_keeps_accepting_tasks_until_exit(
     assert reset_session.call_count == 2
     assert "第一轮完成" in output
     assert "第二轮完成" in output
-    assert "已清空对话历史" in output
+    assert "已创建新会话" in output
+    assert "旧会话和工作目录中的文件保持不变" in output
     assert "会话已结束" in output
 
 
@@ -152,3 +157,144 @@ def test_confirmation_defaults_to_denial(monkeypatch, capsys) -> None:
     output = capsys.readouterr().out
     assert not allowed
     assert "已拒绝" in output
+
+
+def test_main_restores_active_persistent_session(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    session_root = tmp_path / "sessions"
+    store = SessionStore(tmp_path, root=session_root)
+    record = store.create()
+    saved = store.save(
+        record.session_id,
+        [
+            {"role": "user", "content": "旧需求"},
+            {"role": "assistant", "content": "旧回答"},
+        ],
+        {"summary_lines": [], "omitted_summary_lines": 0},
+    )
+    monkeypatch.setenv("MINI_AGENT_SESSION_DIR", str(session_root))
+    monkeypatch.setattr(
+        Settings,
+        "from_env",
+        Mock(return_value=Settings(api_key="test-key")),
+    )
+    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    restore_session = Mock()
+    monkeypatch.setattr(cli_module.CodingAgent, "restore_session", restore_session)
+    monkeypatch.setattr("builtins.input", Mock(return_value="/exit"))
+
+    exit_code = main(["--workspace", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    restore_session.assert_called_once_with(saved.messages, saved.context_state)
+    assert f"当前会话：{saved.session_id}" in output
+    assert "已恢复 1 轮历史对话" in output
+
+
+def test_interactive_session_management_commands(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    session_root = tmp_path / "sessions"
+    store = SessionStore(tmp_path, root=session_root)
+    first = store.create()
+    store.save(
+        first.session_id,
+        [
+            {"role": "user", "content": "第一个会话"},
+            {"role": "assistant", "content": "完成"},
+        ],
+        {"summary_lines": [], "omitted_summary_lines": 0},
+    )
+    second = store.create()
+    monkeypatch.setenv("MINI_AGENT_SESSION_DIR", str(session_root))
+    monkeypatch.setattr(
+        Settings,
+        "from_env",
+        Mock(return_value=Settings(api_key="test-key")),
+    )
+    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(
+        cli_module.CodingAgent,
+        "export_session",
+        Mock(
+            return_value={
+                "messages": [],
+                "context": {
+                    "summary_lines": [],
+                    "omitted_summary_lines": 0,
+                },
+            }
+        ),
+    )
+    user_input = Mock(
+        side_effect=[
+            "/sessions",
+            f"/switch {first.session_id}",
+            "/new",
+            f"/delete {first.session_id}",
+            "y",
+            "/exit",
+        ]
+    )
+    monkeypatch.setattr("builtins.input", user_input)
+
+    exit_code = main(["--workspace", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "当前工作目录的会话" in output
+    assert f"已切换到会话：{first.session_id}" in output
+    assert "已创建新会话" in output
+    assert f"已删除会话：{first.session_id}" in output
+    with pytest.raises(SessionError, match="不存在"):
+        SessionStore(tmp_path, root=session_root).load(first.session_id)
+    assert SessionStore(tmp_path, root=session_root).load(second.session_id)
+
+
+def test_deleting_current_session_creates_replacement(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    session_root = tmp_path / "sessions"
+    store = SessionStore(tmp_path, root=session_root)
+    current = store.create()
+    monkeypatch.setenv("MINI_AGENT_SESSION_DIR", str(session_root))
+    monkeypatch.setattr(
+        Settings,
+        "from_env",
+        Mock(return_value=Settings(api_key="test-key")),
+    )
+    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(
+        cli_module.CodingAgent,
+        "export_session",
+        Mock(
+            return_value={
+                "messages": [],
+                "context": {
+                    "summary_lines": [],
+                    "omitted_summary_lines": 0,
+                },
+            }
+        ),
+    )
+    monkeypatch.setattr(
+        "builtins.input",
+        Mock(side_effect=[f"/delete {current.session_id}", "y", "/exit"]),
+    )
+
+    exit_code = main(["--workspace", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    records = SessionStore(tmp_path, root=session_root).list_sessions()
+    assert exit_code == 0
+    assert "当前会话已删除，已创建新会话" in output
+    assert len(records) == 1
+    assert records[0].session_id != current.session_id

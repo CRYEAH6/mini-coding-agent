@@ -10,6 +10,12 @@ from openai import APIError
 from mini_agent.agent import AgentResult, CodingAgent, StepLimitError
 from mini_agent.client import DeepSeekClient
 from mini_agent.config import ConfigurationError, Settings
+from mini_agent.session import (
+    OpenedSession,
+    SessionError,
+    SessionRecord,
+    SessionStore,
+)
 from mini_agent.tools import ToolRegistry
 from mini_agent.tools.approval import ApprovalRequest
 
@@ -61,6 +67,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             event_handler=output.event,
             text_handler=output.write,
         )
+        session_store = SessionStore(workspace)
+        opened_session = session_store.open_active()
+        current_session = opened_session.record
+        if current_session.messages:
+            agent.restore_session(
+                current_session.messages,
+                current_session.context_state,
+            )
         _print_startup(
             model=settings.model,
             workspace=workspace,
@@ -68,11 +82,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_context_chars=settings.max_context_chars,
             dangerous_commands=args.allow_dangerous_commands,
         )
-    except (ConfigurationError, ValueError) as exc:
+        _print_opened_session(opened_session)
+    except (ConfigurationError, SessionError, ValueError) as exc:
         print(f"配置错误：{exc}")
         return 2
 
-    return _run_interactive(agent, output)
+    return _run_interactive(agent, output, session_store, current_session)
 
 
 class TerminalOutput:
@@ -137,6 +152,8 @@ def _run_task(
 def _run_interactive(
     agent: CodingAgent,
     output: TerminalOutput,
+    session_store: SessionStore,
+    current_session: SessionRecord,
 ) -> int:
     """Keep one Agent session alive until the user explicitly exits."""
     print("交互模式已启动。输入 /help 查看命令，输入 /exit 退出。")
@@ -158,11 +175,100 @@ def _run_interactive(
             print("会话已结束。")
             return 0
         if task == "/new":
+            saved = _save_current_session(
+                session_store,
+                current_session,
+                agent,
+            )
+            if saved is None:
+                continue
+            try:
+                current_session = session_store.create()
+            except SessionError as exc:
+                print(f"新建会话失败：{exc}")
+                continue
             agent.reset_session()
-            print("已清空对话历史，工作目录和本地文件保持不变。")
+            print(f"已创建新会话：{current_session.session_id}")
+            print("旧会话和工作目录中的文件保持不变。")
+            continue
+        if task == "/sessions":
+            _print_sessions(session_store, current_session.session_id)
             continue
         if task == "/help":
             _print_interactive_help()
+            continue
+        if task == "/switch" or task.startswith("/switch "):
+            session_id = _command_argument(task)
+            if session_id is None:
+                print("用法：/switch 会话ID")
+                continue
+            saved = _save_current_session(
+                session_store,
+                current_session,
+                agent,
+            )
+            if saved is None:
+                continue
+            try:
+                target = session_store.load(session_id)
+                agent.restore_session(target.messages, target.context_state)
+                session_store.set_active(target.session_id)
+                current_session = target
+                print(f"已切换到会话：{target.session_id}")
+                print(f"标题：{target.title}（{target.turn_count} 轮）")
+            except RuntimeError as exc:
+                print(f"切换会话失败：{exc}")
+            continue
+        if task == "/delete" or task.startswith("/delete "):
+            session_id = _command_argument(task)
+            if session_id is None:
+                print("用法：/delete 会话ID")
+                continue
+            try:
+                target = session_store.load(session_id)
+            except SessionError as exc:
+                print(f"删除会话失败：{exc}")
+                continue
+            request = ApprovalRequest(
+                tool_name="delete_session",
+                action="删除本地对话会话",
+                details=(
+                    f"会话：{target.session_id}\n"
+                    f"标题：{target.title}\n"
+                    f"对话轮数：{target.turn_count}"
+                ),
+                reason="删除后该会话的聊天历史无法由 Agent 恢复。",
+            )
+            if not _confirm_tool_action(request):
+                continue
+            if target.session_id == current_session.session_id:
+                try:
+                    replacement = session_store.create()
+                    agent.reset_session()
+                    current_session = replacement
+                except SessionError as exc:
+                    print(f"删除会话失败：无法建立替代会话：{exc}")
+                    continue
+                try:
+                    session_store.delete(target.session_id)
+                    print(
+                        "当前会话已删除，已创建新会话："
+                        f"{replacement.session_id}"
+                    )
+                except SessionError as exc:
+                    print(
+                        "已切换到新会话，但旧会话删除失败："
+                        f"{exc}"
+                    )
+            else:
+                try:
+                    session_store.delete(target.session_id)
+                    print(f"已删除会话：{target.session_id}")
+                except SessionError as exc:
+                    print(f"删除会话失败：{exc}")
+            continue
+        if task.startswith("/"):
+            print("未知命令。输入 /help 查看可用命令。")
             continue
 
         try:
@@ -179,14 +285,77 @@ def _run_interactive(
         except KeyboardInterrupt:
             output.finish_line()
             print("本轮已中断，可以继续输入新需求。")
+        finally:
+            saved = _save_current_session(
+                session_store,
+                current_session,
+                agent,
+            )
+            if saved is not None:
+                current_session = saved
 
 
 def _print_interactive_help() -> None:
     print("可用命令：")
     print("  /help  显示帮助")
-    print("  /new   清空对话历史，但保留工作目录中的文件")
+    print("  /new   创建新会话，保留旧会话和工作目录文件")
+    print("  /sessions  查看当前工作目录的历史会话")
+    print("  /switch 会话ID  切换到指定会话")
+    print("  /delete 会话ID  确认后删除指定会话")
     print("  /exit  结束会话")
     print("  /quit  结束会话")
+
+
+def _save_current_session(
+    session_store: SessionStore,
+    current_session: SessionRecord,
+    agent: CodingAgent,
+) -> Optional[SessionRecord]:
+    """Persist the current Agent state without terminating the CLI on failure."""
+    state = agent.export_session()
+    try:
+        return session_store.save(
+            current_session.session_id,
+            state["messages"],
+            state["context"],
+        )
+    except (KeyError, SessionError) as exc:
+        print(f"会话保存失败：{exc}")
+        return None
+
+
+def _print_sessions(session_store: SessionStore, current_id: str) -> None:
+    """Print workspace sessions in most-recently-used order."""
+    records = session_store.list_sessions()
+    if not records:
+        print("当前工作目录没有可用会话。")
+        return
+    print("当前工作目录的会话：")
+    for record in records:
+        marker = "*" if record.session_id == current_id else " "
+        print(
+            f"{marker} {record.session_id} | {record.turn_count} 轮 | "
+            f"{record.updated_at} | {record.title}"
+        )
+
+
+def _command_argument(command: str) -> Optional[str]:
+    parts = command.split(maxsplit=1)
+    if len(parts) != 2 or not parts[1].strip():
+        return None
+    return parts[1].strip()
+
+
+def _print_opened_session(opened: OpenedSession) -> None:
+    """Report whether startup resumed history or created a new session."""
+    if opened.warning:
+        print(f"会话警告：{opened.warning}")
+    record = opened.record
+    if opened.resumed:
+        print(f"当前会话：{record.session_id}")
+        print(f"已恢复 {record.turn_count} 轮历史对话。\n")
+    else:
+        print(f"已创建新会话：{record.session_id}\n")
 
 
 def _confirm_tool_action(request: ApprovalRequest) -> bool:

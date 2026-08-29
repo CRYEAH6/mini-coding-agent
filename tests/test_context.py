@@ -140,3 +140,32 @@ def test_context_compacts_complete_old_conversation_turn() -> None:
         "content": "增加暂停功能",
     }
     assert result.estimated_chars <= 700
+
+
+def test_context_compaction_state_can_be_restored() -> None:
+    manager = ContextManager()
+    manager.restore(
+        "system",
+        {
+            "summary_lines": ["- 用户要求：旧任务"],
+            "omitted_summary_lines": 2,
+        },
+    )
+    state = manager.export_state()
+
+    restored = ContextManager()
+    restored.restore("new system", state)
+
+    assert "new system" in restored.system_content
+    assert "更早的 2 条工具记录已省略" in restored.system_content
+    assert "旧任务" in restored.system_content
+
+
+def test_context_rejects_invalid_persisted_state() -> None:
+    manager = ContextManager()
+
+    with pytest.raises(ContextLimitError, match="摘要格式"):
+        manager.restore(
+            "system",
+            {"summary_lines": [42], "omitted_summary_lines": 0},
+        )
