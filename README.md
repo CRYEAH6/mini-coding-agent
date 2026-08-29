@@ -2,7 +2,7 @@
 
 一个使用 Python 从零实现的命令行编程智能体。用户提供编程任务和工作目录后，Agent 通过 DeepSeek Tool Calling 决定下一步行动，由本地程序完成文件查看、代码修改、命令执行和结果反馈，并持续迭代直到任务完成或触发终止条件。
 
-本项目没有使用 LangChain、LlamaIndex、OpenAI Agents SDK、AutoGen 等 Agent 框架。`openai` 包只负责访问 DeepSeek 的 OpenAI 兼容 API；对话历史、上下文压缩、工具定义与执行、模型输出解析、循环控制、安全策略和错误处理均由项目自行实现。
+项目由 DeepSeek API 客户端、模型—工具循环、上下文管理、本地工具和安全控制等模块组成。`openai` 包负责访问 DeepSeek 的 OpenAI 兼容 API，其余模块共同完成消息维护、工具执行、循环控制和错误处理。
 
 ## 主要功能
 
