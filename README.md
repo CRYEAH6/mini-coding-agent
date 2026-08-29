@@ -90,19 +90,14 @@ DEEPSEEK_API_KEY=your_real_api_key
 
 ## 使用方法
 
-在仓库目录中运行，并通过 `--workspace` 指定 Agent 可以操作的目标项目：
+在仓库目录中启动 Agent，并通过 `--workspace` 指定可以操作的目标项目：
 
 ```bash
 uv run mini-agent \
-  --workspace /absolute/path/to/target-project \
-  "检查项目，修复失败的测试，并在完成后总结修改"
+  --workspace /absolute/path/to/target-project
 ```
 
-如果省略任务，程序会进入持续交互模式：
-
-```bash
-uv run mini-agent --workspace /absolute/path/to/target-project
-```
+启动命令不接受任务正文。程序完成配置检查后进入持续交互模式并显示 `你>`，此时再输入第一项需求。这样可以避免单次模式和交互模式之间的歧义。
 
 一轮任务完成后会再次出现 `你>`，可以围绕同一项目继续追加要求：
 
@@ -127,21 +122,11 @@ uv run mini-agent --workspace /absolute/path/to/target-project
 /quit    结束会话
 ```
 
-如果希望先执行命令行中的初始任务，完成后继续交互，可增加 `--interactive`：
-
-```bash
-uv run mini-agent \
-  --interactive \
-  --workspace /absolute/path/to/target-project \
-  "先检查项目结构并说明下一步计划"
-```
-
 也可以使用 Python 模块入口：
 
 ```bash
 uv run python -m mini_agent \
-  --workspace /absolute/path/to/target-project \
-  "完成指定的编程任务"
+  --workspace /absolute/path/to/target-project
 ```
 
 可用参数：
@@ -150,7 +135,6 @@ uv run python -m mini_agent \
 --workspace PATH              Agent 的工作目录，默认是当前目录
 --max-steps N                 最大模型调用轮数，默认 20
 --allow-dangerous-commands    关闭内置高风险命令拦截
---interactive                 完成初始任务后继续接受新需求
 ```
 
 查看完整帮助：

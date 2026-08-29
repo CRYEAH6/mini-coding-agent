@@ -9,24 +9,20 @@ from mini_agent.cli import _print_startup, build_parser, main
 from mini_agent.config import ConfigurationError, Settings
 
 
-def test_parser_reads_task_workspace_and_step_limit() -> None:
+def test_parser_reads_workspace_and_step_limit() -> None:
     args = build_parser().parse_args(
         [
-            "Fix the bug",
             "--workspace",
             "example",
             "--max-steps",
             "8",
             "--allow-dangerous-commands",
-            "--interactive",
         ]
     )
 
-    assert args.task == "Fix the bug"
     assert args.workspace == "example"
     assert args.max_steps == 8
     assert args.allow_dangerous_commands
-    assert args.interactive
 
 
 def test_main_reports_missing_api_key(monkeypatch, capsys) -> None:
@@ -35,7 +31,7 @@ def test_main_reports_missing_api_key(monkeypatch, capsys) -> None:
     )
     monkeypatch.setattr(Settings, "from_env", missing_key)
 
-    exit_code = main(["Fix the bug"])
+    exit_code = main([])
 
     captured = capsys.readouterr()
     assert exit_code == 2
@@ -73,15 +69,17 @@ def test_main_reports_api_error(monkeypatch, capsys, tmp_path: Path) -> None:
     monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
     monkeypatch.setattr(
         cli_module.CodingAgent,
-        "run",
+        "run_turn",
         Mock(side_effect=FakeAPIError("network unavailable")),
     )
+    monkeypatch.setattr("builtins.input", Mock(side_effect=["Fix the bug", "/exit"]))
 
-    exit_code = main(["Fix the bug", "--workspace", str(tmp_path)])
+    exit_code = main(["--workspace", str(tmp_path)])
 
     output = capsys.readouterr().out
-    assert exit_code == 4
+    assert exit_code == 0
     assert "API 请求失败：network unavailable" in output
+    assert "会话已结束" in output
 
 
 def test_interactive_mode_keeps_accepting_tasks_until_exit(

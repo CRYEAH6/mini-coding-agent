@@ -19,7 +19,6 @@ def build_parser() -> argparse.ArgumentParser:
         prog="mini-agent",
         description="使用 DeepSeek 和本地工具完成编程任务。",
     )
-    parser.add_argument("task", nargs="?", help="需要 Agent 完成的编程任务。")
     parser.add_argument(
         "--workspace",
         default=".",
@@ -36,16 +35,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="允许绕过高风险命令拦截；仅在可信环境中使用。",
     )
-    parser.add_argument(
-        "--interactive",
-        action="store_true",
-        help="任务完成后保留对话并继续接受新需求。",
-    )
     return parser
 
 
 def main(argv: Optional[Sequence[str]] = None) -> int:
-    """Run one task or start a persistent interactive conversation."""
+    """Start one persistent interactive conversation."""
     args = build_parser().parse_args(argv)
     output = TerminalOutput()
 
@@ -76,24 +70,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"配置错误：{exc}")
         return 2
 
-    if args.interactive or args.task is None:
-        return _run_interactive(agent, output, args.task)
-
-    try:
-        _run_task(agent.run, args.task, output)
-    except StepLimitError as exc:
-        print(f"任务未完成：{exc}")
-        return 3
-    except APIError as exc:
-        print(f"API 请求失败：{exc}")
-        return 4
-    except RuntimeError as exc:
-        print(f"Agent 运行失败：{exc}")
-        return 5
-    except KeyboardInterrupt:
-        print("\n任务已由用户中断。")
-        return 130
-    return 0
+    return _run_interactive(agent, output)
 
 
 class TerminalOutput:
@@ -158,16 +135,13 @@ def _run_task(
 def _run_interactive(
     agent: CodingAgent,
     output: TerminalOutput,
-    initial_task: Optional[str],
 ) -> int:
     """Keep one Agent session alive until the user explicitly exits."""
     print("交互模式已启动。输入 /help 查看命令，输入 /exit 退出。")
-    pending_task = initial_task
 
     while True:
         try:
-            task = pending_task if pending_task is not None else input("\n你> ")
-            pending_task = None
+            task = input("\n你> ")
         except EOFError:
             print("\n会话已结束。")
             return 0
