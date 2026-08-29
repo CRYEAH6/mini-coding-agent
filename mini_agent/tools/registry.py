@@ -6,6 +6,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
 from mini_agent.tools.approval import ApprovalHandler
 from mini_agent.tools.filesystem import FileTools
+from mini_agent.tools.git import GitTools
 from mini_agent.tools.result import ToolResult
 from mini_agent.tools.shell import ShellTool
 
@@ -24,6 +25,7 @@ class ToolRegistry:
         approval_handler: Optional[ApprovalHandler] = None,
     ) -> None:
         file_tools = FileTools(workspace)
+        git_tools = GitTools(workspace, approval_handler=approval_handler)
         shell_tool = ShellTool(
             workspace,
             allow_dangerous_commands=allow_dangerous_commands,
@@ -35,6 +37,9 @@ class ToolRegistry:
             "write_file": file_tools.write_file,
             "replace_in_file": file_tools.replace_in_file,
             "run_command": shell_tool.run_command,
+            "git_status": git_tools.git_status,
+            "git_diff": git_tools.git_diff,
+            "git_checkpoint": git_tools.git_checkpoint,
         }
 
     @property
@@ -169,6 +174,66 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
                     },
                 },
                 "required": ["command"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_status",
+            "description": (
+                "读取 Git 分支、工作区修改和最近的 Agent 检查点；"
+                "不会改变仓库。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_diff",
+            "description": (
+                "比较当前完整工作区与 HEAD 或指定 Agent 检查点，"
+                "包含已暂存、未暂存和未跟踪文件。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "base": {
+                        "type": "string",
+                        "description": "Git 基准，默认为 HEAD。",
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": "工作目录内相对路径，默认为整个项目。",
+                    },
+                },
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_checkpoint",
+            "description": (
+                "经用户确认后将当前工作区保存为本地 Git 检查点；"
+                "不修改当前分支、暂存区或工作文件。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "message": {
+                        "type": "string",
+                        "description": "简短说明创建检查点的原因。",
+                    }
+                },
+                "required": ["message"],
                 "additionalProperties": False,
             },
         },

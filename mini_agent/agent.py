@@ -21,6 +21,7 @@ SYSTEM_PROMPT = """你是一个在本地项目中工作的编程智能体。
 开始任务以及进入新的工作阶段时，先用一句简短自然语言说明当前目标和接下来的动作，再调用工具。
 只在阶段发生变化时播报，不要逐条机械复述工具操作，也不要展示内部推理过程。
 文件路径必须使用相对工作目录的路径。修改后应尽量运行相关测试。
+在较大修改前可使用 git_checkpoint 保存本地检查点，并使用 git_diff 检查实际改动。
 敏感 shell 命令会请求用户确认，高风险命令默认会被安全策略阻止，请优先使用非破坏性方案。
 用户拒绝某项操作后，应尊重该决定并调整方案，不要反复请求同一操作。
 工具失败时请阅读错误信息并调整方案，不要盲目重复相同调用。
@@ -332,6 +333,14 @@ def _describe_tool_call(name: str, arguments: str) -> str:
         executable = _command_executable(parsed.get("command"))
         timeout = parsed.get("timeout_seconds", "default")
         return f"（program={executable}，timeout={timeout}）"
+    if name == "git_status":
+        return ""
+    if name == "git_diff":
+        return f"（base={parsed.get('base', 'HEAD')}，path={path or '.'}）"
+    if name == "git_checkpoint":
+        message = parsed.get("message")
+        length = len(message) if isinstance(message, str) else "?"
+        return f"（message_chars={length}）"
     return ""
 
 

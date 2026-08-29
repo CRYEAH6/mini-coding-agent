@@ -281,7 +281,7 @@ def test_agent_compacts_old_tool_rounds(tmp_path: Path) -> None:
     agent = CodingAgent(
         FakeClient(responses),
         ToolRegistry(tmp_path),
-        max_context_chars=2_500,
+        max_context_chars=2_800,
         event_handler=events.append,
     )
 
@@ -301,12 +301,18 @@ def test_tool_description_does_not_echo_sensitive_content() -> None:
         "write_file",
         '{"path": "config.py", "content": "private-value"}',
     )
+    checkpoint_description = _describe_tool_call(
+        "git_checkpoint",
+        '{"message": "checkpoint private-value"}',
+    )
 
     assert "program=python3" in command_description
     assert "private-value" not in command_description
     assert "path=config.py" in write_description
     assert "content_chars=13" in write_description
     assert "private-value" not in write_description
+    assert "message_chars=24" in checkpoint_description
+    assert "private-value" not in checkpoint_description
 
 
 def test_agent_executes_multiple_tool_calls_from_one_response(

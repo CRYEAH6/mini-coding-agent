@@ -13,6 +13,9 @@ def test_registry_exposes_all_tool_definitions(tmp_path: Path) -> None:
     names = {item["function"]["name"] for item in registry.definitions}
 
     assert names == {
+        "git_checkpoint",
+        "git_diff",
+        "git_status",
         "list_files",
         "read_file",
         "write_file",
