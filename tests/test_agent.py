@@ -88,6 +88,8 @@ def test_agent_executes_tool_and_returns_final_response(tmp_path: Path) -> None:
     assert second_request[2]["reasoning_content"] == (
         "I should create the requested file."
     )
+    assert "进入新的工作阶段" in second_request[0]["content"]
+    assert "不要展示内部推理过程" in second_request[0]["content"]
     assert second_request[3]["tool_call_id"] == "call-1"
 
 
