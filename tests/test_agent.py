@@ -44,9 +44,12 @@ class FakeClient:
         self._responses = list(responses)
         self.requests: list[Sequence[Mapping[str, Any]]] = []
 
-    def create_message(self, messages, tools=None):
+    def create_message(self, messages, tools=None, on_text=None):
         self.requests.append(deepcopy(messages))
-        return self._responses.pop(0)
+        response = self._responses.pop(0)
+        if on_text is not None and response.content:
+            on_text(response.content)
+        return response
 
 
 def test_agent_executes_tool_and_returns_final_response(tmp_path: Path) -> None:
@@ -96,6 +99,61 @@ def test_agent_stops_after_final_response_without_tools(tmp_path: Path) -> None:
     assert result.content == "无需修改。"
     assert result.steps == 1
     assert result.tool_calls == 0
+
+
+def test_agent_keeps_history_across_interactive_turns(tmp_path: Path) -> None:
+    client = FakeClient(
+        [
+            _message(content="飞机大战已经创建。"),
+            _message(content="暂停功能已经补充。"),
+        ]
+    )
+    agent = CodingAgent(client, ToolRegistry(tmp_path))
+
+    first = agent.run_turn("创建飞机大战")
+    second = agent.run_turn("再增加暂停功能")
+
+    assert first.content == "飞机大战已经创建。"
+    assert second.content == "暂停功能已经补充。"
+    assert [message["role"] for message in client.requests[1]] == [
+        "system",
+        "user",
+        "assistant",
+        "user",
+    ]
+    assert client.requests[1][-2]["content"] == "飞机大战已经创建。"
+    assert client.requests[1][-1]["content"] == "再增加暂停功能"
+
+
+def test_agent_forwards_streamed_text_to_handler(tmp_path: Path) -> None:
+    chunks = []
+    agent = CodingAgent(
+        FakeClient([_message(content="实时回复")]),
+        ToolRegistry(tmp_path),
+        text_handler=chunks.append,
+    )
+
+    result = agent.run_turn("介绍项目")
+
+    assert result.content == "实时回复"
+    assert chunks == ["实时回复"]
+
+
+def test_reset_session_discards_chat_history(tmp_path: Path) -> None:
+    client = FakeClient(
+        [_message(content="第一轮"), _message(content="新会话")]
+    )
+    agent = CodingAgent(client, ToolRegistry(tmp_path))
+    agent.run_turn("旧任务")
+
+    agent.reset_session()
+    agent.run_turn("新任务")
+
+    assert [message["role"] for message in client.requests[1]] == [
+        "system",
+        "user",
+    ]
+    assert client.requests[1][-1]["content"] == "新任务"
 
 
 def test_agent_rejects_empty_task(tmp_path: Path) -> None:

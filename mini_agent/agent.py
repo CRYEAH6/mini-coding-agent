@@ -6,7 +6,7 @@ from pathlib import Path
 import shlex
 from typing import Any, Callable, Mapping, Optional
 
-from mini_agent.client import DeepSeekClient
+from mini_agent.client import DeepSeekClient, TextHandler
 from mini_agent.context import ContextManager
 from mini_agent.tools import ToolRegistry, ToolResult
 
@@ -36,12 +36,13 @@ class ToolLoopError(RuntimeError):
 
 @dataclass(frozen=True)
 class AgentResult:
-    """Final text and execution statistics for one task."""
+    """Final text and execution statistics for one conversation turn."""
 
     content: str
     steps: int
     tool_calls: int
     compacted_rounds: int
+    compacted_turns: int = 0
 
 
 EventHandler = Callable[[str], None]
@@ -58,6 +59,7 @@ class CodingAgent:
         max_steps: int = DEFAULT_MAX_STEPS,
         max_context_chars: int = 200_000,
         event_handler: Optional[EventHandler] = None,
+        text_handler: Optional[TextHandler] = None,
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps 必须大于 0。")
@@ -66,36 +68,70 @@ class CodingAgent:
         self._max_steps = max_steps
         self._context = ContextManager(max_context_chars)
         self._emit = event_handler or (lambda _: None)
+        self._stream_text = text_handler
+        self._messages: list[Mapping[str, Any]] = []
+        self.reset_session()
 
     def run(self, task: str) -> AgentResult:
-        """Run one task until the model returns a final response."""
+        """Run one isolated task, discarding any earlier session history."""
+        self.reset_session()
+        return self.run_turn(task)
+
+    def reset_session(self) -> None:
+        """Start a fresh conversation while keeping tools and configuration."""
+        self._messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        self._context.start(SYSTEM_PROMPT)
+
+    def run_turn(self, task: str) -> AgentResult:
+        """Append one user request and continue the current conversation."""
         if not isinstance(task, str) or not task.strip():
             raise ValueError("任务内容不能为空。")
 
-        messages: list[Mapping[str, Any]] = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": task.strip()},
-        ]
+        self._messages.append({"role": "user", "content": task.strip()})
+        try:
+            return self._complete_turn()
+        except (Exception, KeyboardInterrupt) as exc:
+            self._record_interruption(exc)
+            raise
+
+    def _complete_turn(self) -> AgentResult:
+        """Run the model-tool loop for the user message already appended."""
         tool_call_count = 0
         compacted_round_count = 0
+        compacted_turn_count = 0
         consecutive_failures = 0
         previous_fingerprint: Optional[str] = None
         repeated_call_count = 0
 
-        self._context.start(SYSTEM_PROMPT)
         for step in range(1, self._max_steps + 1):
-            compacted = self._context.prepare(messages)
-            messages = compacted.messages
+            compacted = self._context.prepare(self._messages)
+            self._messages = compacted.messages
             if compacted.removed_rounds:
                 compacted_round_count += compacted.removed_rounds
                 self._emit(
                     "[上下文] 已压缩：移除 "
                     f"{compacted.removed_rounds} 个较早工具轮次。"
                 )
+            if compacted.removed_turns:
+                compacted_turn_count += compacted.removed_turns
+                self._emit(
+                    "[上下文] 已压缩：移除 "
+                    f"{compacted.removed_turns} 个较早对话轮次。"
+                )
             self._emit(f"[模型 {step}/{self._max_steps}] 正在生成下一步...")
-            message = self._client.create_message(messages, self._tools.definitions)
+            if self._stream_text is None:
+                message = self._client.create_message(
+                    self._messages,
+                    self._tools.definitions,
+                )
+            else:
+                message = self._client.create_message(
+                    self._messages,
+                    self._tools.definitions,
+                    on_text=self._stream_text,
+                )
             assistant_message = _serialize_assistant_message(message)
-            messages.append(assistant_message)
+            self._messages.append(assistant_message)
 
             tool_calls = getattr(message, "tool_calls", None) or []
             if not tool_calls:
@@ -109,6 +145,7 @@ class CodingAgent:
                     step,
                     tool_call_count,
                     compacted_round_count,
+                    compacted_turn_count,
                 )
 
             for tool_call in tool_calls:
@@ -166,7 +203,7 @@ class CodingAgent:
                 self._emit(f"[结果] {status}")
                 if not result.success:
                     self._emit(f"[错误] {_preview(result.content)}")
-                messages.append(
+                self._messages.append(
                     {
                         "role": "tool",
                         "tool_call_id": tool_call.id,
@@ -179,6 +216,39 @@ class CodingAgent:
 
         raise StepLimitError(
             f"Agent 已达到最大步骤数 {self._max_steps}，任务被终止。"
+        )
+
+    def _record_interruption(self, exc: BaseException) -> None:
+        """Close an interrupted turn so a later user message remains valid."""
+        pending_calls: dict[str, Mapping[str, Any]] = {}
+        completed_calls: set[str] = set()
+        for message in reversed(self._messages):
+            role = message.get("role")
+            if role == "user":
+                break
+            if role == "tool":
+                completed_calls.add(str(message.get("tool_call_id")))
+            elif role == "assistant" and message.get("tool_calls"):
+                for tool_call in message["tool_calls"]:
+                    pending_calls[str(tool_call.get("id"))] = tool_call
+
+        interruption = ToolResult(False, "本轮执行已在本地中断。").to_json()
+        for call_id in pending_calls:
+            if call_id not in completed_calls:
+                self._messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": call_id,
+                        "content": interruption,
+                    }
+                )
+
+        reason = str(exc).strip() or type(exc).__name__
+        self._messages.append(
+            {
+                "role": "assistant",
+                "content": f"[本轮在本地中断：{_preview(reason)}]",
+            }
         )
 
 

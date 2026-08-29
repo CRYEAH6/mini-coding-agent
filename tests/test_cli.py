@@ -4,6 +4,7 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import mini_agent.cli as cli_module
+from mini_agent.agent import AgentResult
 from mini_agent.cli import _print_startup, build_parser, main
 from mini_agent.config import ConfigurationError, Settings
 
@@ -17,6 +18,7 @@ def test_parser_reads_task_workspace_and_step_limit() -> None:
             "--max-steps",
             "8",
             "--allow-dangerous-commands",
+            "--interactive",
         ]
     )
 
@@ -24,6 +26,7 @@ def test_parser_reads_task_workspace_and_step_limit() -> None:
     assert args.workspace == "example"
     assert args.max_steps == 8
     assert args.allow_dangerous_commands
+    assert args.interactive
 
 
 def test_main_reports_missing_api_key(monkeypatch, capsys) -> None:
@@ -79,3 +82,41 @@ def test_main_reports_api_error(monkeypatch, capsys, tmp_path: Path) -> None:
     output = capsys.readouterr().out
     assert exit_code == 4
     assert "API 请求失败：network unavailable" in output
+
+
+def test_interactive_mode_keeps_accepting_tasks_until_exit(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setattr(
+        Settings,
+        "from_env",
+        Mock(return_value=Settings(api_key="test-key")),
+    )
+    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    run_turn = Mock(
+        side_effect=[
+            AgentResult("第一轮完成", 1, 0, 0),
+            AgentResult("第二轮完成", 1, 0, 0),
+        ]
+    )
+    reset_session = Mock()
+    monkeypatch.setattr(cli_module.CodingAgent, "run_turn", run_turn)
+    monkeypatch.setattr(cli_module.CodingAgent, "reset_session", reset_session)
+    user_input = Mock(
+        side_effect=["创建飞机大战", "/new", "增加暂停功能", "/exit"]
+    )
+    monkeypatch.setattr("builtins.input", user_input)
+
+    exit_code = main(["--workspace", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert run_turn.call_args_list[0].args == ("创建飞机大战",)
+    assert run_turn.call_args_list[1].args == ("增加暂停功能",)
+    assert reset_session.call_count == 2
+    assert "第一轮完成" in output
+    assert "第二轮完成" in output
+    assert "已清空对话历史" in output
+    assert "会话已结束" in output

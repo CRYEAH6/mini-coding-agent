@@ -22,6 +22,7 @@ class CompactionResult:
     messages: list[Mapping[str, Any]]
     removed_rounds: int
     estimated_chars: int
+    removed_turns: int = 0
 
 
 class ContextManager:
@@ -56,41 +57,74 @@ class ContextManager:
         prepared = [dict(message) for message in messages]
         estimated = _estimate_chars(prepared)
         if estimated <= self._max_chars:
-            return CompactionResult(prepared, 0, estimated)
+            return CompactionResult(prepared, 0, estimated, 0)
         if len(prepared) < 2:
             raise ContextLimitError("上下文缺少必要的 system 或 user 消息。")
 
-        prefix = prepared[:2]
-        rounds = _split_rounds(prepared[2:])
-        removed = 0
-        while len(rounds) > self._keep_recent_rounds:
-            oldest = rounds.pop(0)
-            self._record_round(oldest)
-            removed += 1
-            candidate = self._build_messages(prefix, rounds)
+        system_message = prepared[0]
+        if system_message.get("role") != "system":
+            raise ContextLimitError("对话历史必须以 system 消息开始。")
+        turns = _split_turns(prepared[1:])
+        removed_rounds = 0
+        removed_turns = 0
+
+        while len(turns) > 1:
+            self._record_turn(turns.pop(0))
+            removed_turns += 1
+            candidate = self._build_messages(system_message, turns)
             estimated = _estimate_chars(candidate)
             if estimated <= self._max_chars:
-                return CompactionResult(candidate, removed, estimated)
+                return CompactionResult(
+                    candidate,
+                    removed_rounds,
+                    estimated,
+                    removed_turns,
+                )
 
-        candidate = self._build_messages(prefix, rounds)
+        latest_turn = _split_turn_units(turns[0])
+        removable_rounds = [
+            unit for unit in latest_turn if _is_tool_round(unit)
+        ]
+        while len(removable_rounds) > self._keep_recent_rounds:
+            oldest = removable_rounds.pop(0)
+            latest_turn.remove(oldest)
+            self._record_round(oldest)
+            removed_rounds += 1
+            turns[0] = [message for unit in latest_turn for message in unit]
+            candidate = self._build_messages(system_message, turns)
+            estimated = _estimate_chars(candidate)
+            if estimated <= self._max_chars:
+                return CompactionResult(
+                    candidate,
+                    removed_rounds,
+                    estimated,
+                    removed_turns,
+                )
+
+        candidate = self._build_messages(system_message, turns)
         estimated = _estimate_chars(candidate)
         if estimated > self._max_chars:
             raise ContextLimitError(
-                "system 指令、用户任务和最近工具轮次已超过上下文预算，"
+                "system 指令、当前用户任务和最近工具轮次已超过上下文预算，"
                 "请缩小任务范围或提高 DEEPSEEK_MAX_CONTEXT_CHARS。"
             )
-        return CompactionResult(candidate, removed, estimated)
+        return CompactionResult(
+            candidate,
+            removed_rounds,
+            estimated,
+            removed_turns,
+        )
 
     def _build_messages(
         self,
-        prefix: Sequence[Mapping[str, Any]],
-        rounds: Sequence[Sequence[Mapping[str, Any]]],
+        system: Mapping[str, Any],
+        turns: Sequence[Sequence[Mapping[str, Any]]],
     ) -> list[Mapping[str, Any]]:
-        system_message = dict(prefix[0])
+        system_message = dict(system)
         system_message["content"] = self._system_content()
-        result: list[Mapping[str, Any]] = [system_message, dict(prefix[1])]
-        for round_messages in rounds:
-            result.extend(round_messages)
+        result: list[Mapping[str, Any]] = [system_message]
+        for turn in turns:
+            result.extend(turn)
         return result
 
     def _system_content(self) -> str:
@@ -120,26 +154,102 @@ class ContextManager:
             arguments = str(function.get("arguments", "{}"))
             preview = _single_line(arguments)[:ARGUMENT_PREVIEW_CHARS]
             status = results.get(tool_call.get("id"), "结果未知")
-            self._summary_lines.append(f"- {name}({preview})：{status}")
+            self._append_summary(f"- 工具 {name}({preview})：{status}")
+
+    def _record_turn(self, turn: Sequence[Mapping[str, Any]]) -> None:
+        """Summarize one complete earlier user turn before removing it."""
+        user_content = str(turn[0].get("content", ""))
+        self._append_summary(
+            f"- 用户要求：{_single_line(user_content)[:ARGUMENT_PREVIEW_CHARS]}"
+        )
+        for unit in _split_turn_units(turn):
+            if _is_tool_round(unit):
+                self._record_round(unit)
+        final_message = turn[-1]
+        if final_message.get("role") == "assistant" and not final_message.get(
+            "tool_calls"
+        ):
+            final_content = str(final_message.get("content", ""))
+            self._append_summary(
+                f"- 模型答复：{_single_line(final_content)[:ARGUMENT_PREVIEW_CHARS]}"
+            )
+
+    def _append_summary(self, line: str) -> None:
+        """Append one bounded summary line."""
+        self._summary_lines.append(line)
 
         while len(self._summary_lines) > MAX_SUMMARY_LINES:
             self._summary_lines.pop(0)
             self._omitted_summary_lines += 1
 
 
-def _split_rounds(
+def _split_turns(
     history: Sequence[Mapping[str, Any]],
 ) -> list[list[Mapping[str, Any]]]:
-    """Group each assistant message with all following tool results."""
-    rounds: list[list[Mapping[str, Any]]] = []
+    """Split a session into user turns and validate tool-call pairing."""
+    turns: list[list[Mapping[str, Any]]] = []
+    current: list[Mapping[str, Any]] = []
+    pending_call_ids: set[str] = set()
+
     for message in history:
+        role = message.get("role")
+        if role == "user":
+            if pending_call_ids:
+                raise ContextLimitError("对话历史结构无效，工具结果不完整。")
+            if current:
+                turns.append(current)
+            current = [message]
+            continue
+
+        if not current:
+            raise ContextLimitError("对话历史结构无效，消息缺少用户轮次。")
+        if role == "assistant":
+            if pending_call_ids:
+                raise ContextLimitError("对话历史结构无效，工具结果不完整。")
+            current.append(message)
+            pending_call_ids = {
+                str(tool_call.get("id"))
+                for tool_call in message.get("tool_calls", [])
+            }
+        elif role == "tool":
+            call_id = str(message.get("tool_call_id"))
+            if call_id not in pending_call_ids:
+                raise ContextLimitError("对话历史结构无效，存在孤立工具结果。")
+            current.append(message)
+            pending_call_ids.remove(call_id)
+        else:
+            raise ContextLimitError(f"对话历史结构无效，未知角色：{role}")
+
+    if pending_call_ids:
+        raise ContextLimitError("对话历史结构无效，工具结果不完整。")
+    if current:
+        turns.append(current)
+    if not turns:
+        raise ContextLimitError("上下文缺少必要的 user 消息。")
+    return turns
+
+
+def _split_turn_units(
+    turn: Sequence[Mapping[str, Any]],
+) -> list[list[Mapping[str, Any]]]:
+    """Group a turn into one user message and atomic assistant/tool units."""
+    units: list[list[Mapping[str, Any]]] = [[turn[0]]]
+    for message in turn[1:]:
         if message.get("role") == "assistant":
-            rounds.append([message])
-        elif message.get("role") == "tool" and rounds:
-            rounds[-1].append(message)
+            units.append([message])
+        elif message.get("role") == "tool" and _is_tool_round(units[-1]):
+            units[-1].append(message)
         else:
             raise ContextLimitError("对话历史结构无效，无法安全压缩。")
-    return rounds
+    return units
+
+
+def _is_tool_round(unit: Sequence[Mapping[str, Any]]) -> bool:
+    return bool(
+        unit
+        and unit[0].get("role") == "assistant"
+        and unit[0].get("tool_calls")
+    )
 
 
 def _tool_status(content: Any) -> str:

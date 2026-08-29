@@ -117,3 +117,26 @@ def test_context_rejects_orphan_tool_message() -> None:
 
     with pytest.raises(ContextLimitError, match="结构无效"):
         manager.prepare(messages)
+
+
+def test_context_compacts_complete_old_conversation_turn() -> None:
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "创建飞机大战"},
+        *_round(1, output_size=500),
+        {"role": "assistant", "content": "第一轮已完成" + "x" * 400},
+        {"role": "user", "content": "增加暂停功能"},
+    ]
+    manager = ContextManager(max_chars=700, keep_recent_rounds=1)
+    manager.start("system")
+
+    result = manager.prepare(messages)
+
+    assert result.removed_turns == 1
+    assert result.removed_rounds == 0
+    assert "创建飞机大战" in result.messages[0]["content"]
+    assert result.messages[-1] == {
+        "role": "user",
+        "content": "增加暂停功能",
+    }
+    assert result.estimated_chars <= 700
