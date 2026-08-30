@@ -12,9 +12,11 @@ class CommandDecision:
     allowed: bool
     reason: str = ""
     requires_approval: bool = False
+    network_access: bool = False
 
 
 Rule = Tuple[Pattern[str], str]
+SensitiveRule = Tuple[Pattern[str], str, bool]
 COMMAND_START = r"(?:^|[;&|(\n]\s*)"
 
 DANGEROUS_RULES: Sequence[Rule] = (
@@ -95,7 +97,7 @@ DANGEROUS_RULES: Sequence[Rule] = (
     ),
 )
 
-SENSITIVE_RULES: Sequence[Rule] = (
+SENSITIVE_RULES: Sequence[SensitiveRule] = (
     (
         re.compile(
             rf"{COMMAND_START}(?:\S*/)?python(?:3(?:\.\d+)?)?\s+-m\s+"
@@ -103,6 +105,7 @@ SENSITIVE_RULES: Sequence[Rule] = (
             re.IGNORECASE,
         ),
         "该命令会安装、卸载或同步 Python 项目依赖。",
+        True,
     ),
     (
         re.compile(
@@ -111,6 +114,7 @@ SENSITIVE_RULES: Sequence[Rule] = (
             re.IGNORECASE,
         ),
         "该命令会安装、卸载或同步 Python 项目依赖。",
+        True,
     ),
     (
         re.compile(
@@ -119,6 +123,7 @@ SENSITIVE_RULES: Sequence[Rule] = (
             re.IGNORECASE,
         ),
         "该命令会安装、卸载或同步 Python 项目依赖。",
+        True,
     ),
     (
         re.compile(
@@ -127,6 +132,7 @@ SENSITIVE_RULES: Sequence[Rule] = (
             re.IGNORECASE,
         ),
         "该命令会更改 JavaScript 项目依赖。",
+        True,
     ),
     (
         re.compile(
@@ -135,6 +141,7 @@ SENSITIVE_RULES: Sequence[Rule] = (
             re.IGNORECASE,
         ),
         "该命令会更改系统级软件包。",
+        True,
     ),
     (
         re.compile(
@@ -142,18 +149,29 @@ SENSITIVE_RULES: Sequence[Rule] = (
             re.IGNORECASE,
         ),
         "该命令会访问外部网络或远程主机。",
+        True,
     ),
     (
         re.compile(
             rf"{COMMAND_START}(?:\S*/)?git\b[^;&|\n]*\b"
-            r"(?:commit|push|pull|fetch|clone)\b",
+            r"(?:push|pull|fetch|clone)\b",
             re.IGNORECASE,
         ),
-        "该命令会创建 Git 历史或与远程仓库交互。",
+        "该命令会与 Git 远程仓库交互。",
+        True,
+    ),
+    (
+        re.compile(
+            rf"{COMMAND_START}(?:\S*/)?git\b[^;&|\n]*\bcommit\b",
+            re.IGNORECASE,
+        ),
+        "该命令会创建本地 Git 提交。",
+        False,
     ),
     (
         re.compile(rf"{COMMAND_START}(?:\S*/)?chmod\b", re.IGNORECASE),
         "该命令会修改文件权限。",
+        False,
     ),
 )
 
@@ -170,8 +188,25 @@ class CommandPolicy:
             if pattern.search(command):
                 if not self._allow_dangerous_commands:
                     return CommandDecision(False, reason)
-                return CommandDecision(True, reason, requires_approval=True)
-        for pattern, reason in SENSITIVE_RULES:
+                return CommandDecision(
+                    True,
+                    reason,
+                    requires_approval=True,
+                    network_access=_command_requires_network(command),
+                )
+        for pattern, reason, network_access in SENSITIVE_RULES:
             if pattern.search(command):
-                return CommandDecision(True, reason, requires_approval=True)
+                return CommandDecision(
+                    True,
+                    reason,
+                    requires_approval=True,
+                    network_access=network_access,
+                )
         return CommandDecision(True)
+
+
+def _command_requires_network(command: str) -> bool:
+    return any(
+        network_access and pattern.search(command)
+        for pattern, _, network_access in SENSITIVE_RULES
+    )

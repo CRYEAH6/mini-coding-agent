@@ -9,6 +9,7 @@ from mini_agent.tools.filesystem import FileTools
 from mini_agent.tools.git import GitTools
 from mini_agent.tools.result import ToolResult
 from mini_agent.tools.shell import ShellTool
+from mini_agent.tools.sandbox import STRICT_MODE
 
 
 ToolHandler = Callable[..., ToolResult]
@@ -23,6 +24,7 @@ class ToolRegistry:
         *,
         allow_dangerous_commands: bool = False,
         approval_handler: Optional[ApprovalHandler] = None,
+        sandbox_mode: str = STRICT_MODE,
     ) -> None:
         file_tools = FileTools(workspace)
         git_tools = GitTools(workspace, approval_handler=approval_handler)
@@ -30,6 +32,7 @@ class ToolRegistry:
             workspace,
             allow_dangerous_commands=allow_dangerous_commands,
             approval_handler=approval_handler,
+            sandbox_mode=sandbox_mode,
         )
         self._handlers: dict[str, ToolHandler] = {
             "list_files": file_tools.list_files,
@@ -171,6 +174,13 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
                     "timeout_seconds": {
                         "type": "number",
                         "description": "超时秒数，默认 30，最大 120。",
+                    },
+                    "network_access": {
+                        "type": "boolean",
+                        "description": (
+                            "是否请求为本条命令临时开放网络，默认 false；"
+                            "开放前需要用户确认。"
+                        ),
                     },
                 },
                 "required": ["command"],

@@ -8,6 +8,7 @@ from typing import Optional, Union
 
 from mini_agent.tools.approval import ApprovalHandler, ApprovalRequest
 from mini_agent.tools.result import ToolResult
+from mini_agent.tools.sandbox import CommandSandbox, SandboxError, STRICT_MODE
 from mini_agent.tools.security import CommandPolicy
 
 
@@ -25,6 +26,7 @@ class ShellTool:
         *,
         allow_dangerous_commands: bool = False,
         approval_handler: Optional[ApprovalHandler] = None,
+        sandbox_mode: str = STRICT_MODE,
     ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         if not resolved.is_dir():
@@ -32,11 +34,13 @@ class ShellTool:
         self._workspace = resolved
         self._policy = CommandPolicy(allow_dangerous_commands)
         self._request_approval = approval_handler
+        self._sandbox = CommandSandbox(resolved, sandbox_mode)
 
     def run_command(
         self,
         command: str,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
+        network_access: bool = False,
     ) -> ToolResult:
         """Run one command in zsh and return its exit status and output."""
         if not isinstance(command, str) or not command.strip():
@@ -50,16 +54,23 @@ class ShellTool:
                 False,
                 f"timeout_seconds 必须在 0 到 {MAX_TIMEOUT_SECONDS} 之间。",
             )
+        if not isinstance(network_access, bool):
+            return ToolResult(False, "network_access 必须是布尔值。")
 
         decision = self._policy.check(command)
         if not decision.allowed:
             return ToolResult(False, f"命令被安全策略阻止：{decision.reason}")
-        if decision.requires_approval:
+        allow_network = decision.network_access or network_access
+        requires_approval = decision.requires_approval or network_access
+        if requires_approval:
+            reason = decision.reason
+            if network_access and not decision.network_access:
+                reason = "模型请求为该命令临时开放外部网络。"
             request = ApprovalRequest(
                 tool_name="run_command",
                 action="执行需授权命令",
                 details=command,
-                reason=decision.reason,
+                reason=reason,
             )
             if self._request_approval is None:
                 return ToolResult(
@@ -69,26 +80,44 @@ class ShellTool:
             if not self._request_approval(request):
                 return ToolResult(False, "用户拒绝执行该命令。")
 
-        process = subprocess.Popen(
-            ["/bin/zsh", "-lc", command],
-            cwd=self._workspace,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
-            start_new_session=True,
-        )
         try:
-            stdout, stderr = process.communicate(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGTERM)
-            stdout, stderr = process.communicate()
-            details = self._format_output(stdout, stderr)
-            return ToolResult(
-                False,
-                f"命令执行超过 {timeout_seconds:g} 秒，已终止。\n{details}",
-            )
+            with self._sandbox.prepare(
+                command,
+                allow_network=allow_network,
+            ) as plan:
+                process = subprocess.Popen(
+                    plan.arguments,
+                    cwd=self._workspace,
+                    env=plan.environment,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    start_new_session=True,
+                )
+                try:
+                    stdout, stderr = process.communicate(timeout=timeout_seconds)
+                except subprocess.TimeoutExpired:
+                    os.killpg(process.pid, signal.SIGTERM)
+                    stdout, stderr = process.communicate()
+                    details = self._format_output(stdout, stderr)
+                    return ToolResult(
+                        False,
+                        f"命令执行超过 {timeout_seconds:g} 秒，"
+                        f"已终止。\n{details}",
+                    )
+        except SandboxError as exc:
+            return ToolResult(False, f"无法启用系统沙箱：{exc}")
+        except OSError as exc:
+            return ToolResult(False, f"无法启动命令进程：{exc}")
+
+        if (
+            self._sandbox.mode == STRICT_MODE
+            and process.returncode == 71
+            and "sandbox_apply" in stderr
+        ):
+            return ToolResult(False, f"macOS 系统沙箱启动失败：{stderr.strip()}")
 
         details = self._format_output(stdout, stderr)
         return ToolResult(

@@ -18,6 +18,7 @@ from mini_agent.session import (
 )
 from mini_agent.tools import ToolRegistry
 from mini_agent.tools.approval import ApprovalRequest
+from mini_agent.tools.sandbox import SANDBOX_MODES, STRICT_MODE
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -42,6 +43,12 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="允许高风险命令进入人工确认流程；仅在可信环境中使用。",
     )
+    parser.add_argument(
+        "--sandbox-mode",
+        choices=SANDBOX_MODES,
+        default=STRICT_MODE,
+        help="命令隔离模式：strict 为系统沙箱，policy 仅使用策略检查。",
+    )
     return parser
 
 
@@ -57,6 +64,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             workspace,
             allow_dangerous_commands=args.allow_dangerous_commands,
             approval_handler=_confirm_tool_action,
+            sandbox_mode=args.sandbox_mode,
         )
         client = DeepSeekClient(settings)
         agent = CodingAgent(
@@ -81,6 +89,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_steps=args.max_steps,
             max_context_chars=settings.max_context_chars,
             dangerous_commands=args.allow_dangerous_commands,
+            sandbox_mode=args.sandbox_mode,
         )
         _print_opened_session(opened_session)
     except (ConfigurationError, SessionError, ValueError) as exc:
@@ -382,6 +391,7 @@ def _print_startup(
     max_steps: int,
     max_context_chars: int,
     dangerous_commands: bool,
+    sandbox_mode: str,
 ) -> None:
     """Print a compact, secret-free run configuration summary."""
     safety = (
@@ -395,3 +405,5 @@ def _print_startup(
     print(f"最大步骤：{max_steps}")
     print(f"上下文预算：{max_context_chars} 字符")
     print(f"安全模式：{safety}\n")
+    isolation = "macOS 系统沙箱" if sandbox_mode == STRICT_MODE else "策略检查"
+    print(f"命令隔离：{isolation}\n")

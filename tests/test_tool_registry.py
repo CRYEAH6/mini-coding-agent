@@ -77,7 +77,11 @@ def test_registry_rejects_wrong_argument_type(tmp_path: Path) -> None:
 
 def test_registry_executes_sensitive_command_after_approval(tmp_path: Path) -> None:
     approval_handler = Mock(return_value=True)
-    registry = ToolRegistry(tmp_path, approval_handler=approval_handler)
+    registry = ToolRegistry(
+        tmp_path,
+        approval_handler=approval_handler,
+        sandbox_mode="policy",
+    )
 
     result = registry.execute("run_command", '{"command": "curl --version"}')
 
@@ -92,7 +96,11 @@ def test_registry_does_not_execute_sensitive_command_when_denied(
     tmp_path: Path,
 ) -> None:
     approval_handler = Mock(return_value=False)
-    registry = ToolRegistry(tmp_path, approval_handler=approval_handler)
+    registry = ToolRegistry(
+        tmp_path,
+        approval_handler=approval_handler,
+        sandbox_mode="policy",
+    )
 
     result = registry.execute("run_command", '{"command": "curl --version"}')
 
@@ -102,7 +110,7 @@ def test_registry_does_not_execute_sensitive_command_when_denied(
 
 
 def test_registry_reports_missing_approval_entry(tmp_path: Path) -> None:
-    registry = ToolRegistry(tmp_path)
+    registry = ToolRegistry(tmp_path, sandbox_mode="policy")
 
     result = registry.execute("run_command", '{"command": "curl --version"}')
 
@@ -112,7 +120,11 @@ def test_registry_reports_missing_approval_entry(tmp_path: Path) -> None:
 
 def test_registry_runs_normal_command_without_approval(tmp_path: Path) -> None:
     approval_handler = Mock(return_value=False)
-    registry = ToolRegistry(tmp_path, approval_handler=approval_handler)
+    registry = ToolRegistry(
+        tmp_path,
+        approval_handler=approval_handler,
+        sandbox_mode="policy",
+    )
 
     result = registry.execute(
         "run_command",

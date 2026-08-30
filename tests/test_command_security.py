@@ -55,6 +55,16 @@ def test_explicit_override_allows_blocked_command() -> None:
     assert decision.requires_approval
 
 
+def test_force_push_override_requires_network_access() -> None:
+    decision = CommandPolicy(allow_dangerous_commands=True).check(
+        "git push origin main --force"
+    )
+
+    assert decision.allowed
+    assert decision.requires_approval
+    assert decision.network_access
+
+
 @pytest.mark.parametrize(
     "command",
     [
@@ -81,3 +91,18 @@ def test_normal_command_does_not_require_approval() -> None:
 
     assert decision.allowed
     assert not decision.requires_approval
+    assert not decision.network_access
+
+
+def test_local_git_commit_does_not_open_network() -> None:
+    decision = CommandPolicy().check("git commit -m checkpoint")
+
+    assert decision.requires_approval
+    assert not decision.network_access
+
+
+def test_network_command_requests_network_access() -> None:
+    decision = CommandPolicy().check("curl https://example.com")
+
+    assert decision.requires_approval
+    assert decision.network_access

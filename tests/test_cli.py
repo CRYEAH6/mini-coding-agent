@@ -26,6 +26,7 @@ def test_parser_reads_workspace_and_step_limit() -> None:
     assert args.workspace == "example"
     assert args.max_steps == 8
     assert args.allow_dangerous_commands
+    assert args.sandbox_mode == "strict"
 
 
 def test_main_reports_missing_api_key(monkeypatch, capsys) -> None:
@@ -49,6 +50,7 @@ def test_startup_summary_is_clear_and_secret_free(capsys) -> None:
         max_steps=12,
         max_context_chars=100_000,
         dangerous_commands=False,
+        sandbox_mode="strict",
     )
 
     output = capsys.readouterr().out
@@ -57,6 +59,7 @@ def test_startup_summary_is_clear_and_secret_free(capsys) -> None:
     assert "最大步骤：12" in output
     assert "上下文预算：100000 字符" in output
     assert "高风险命令默认拦截" in output
+    assert "命令隔离：macOS 系统沙箱" in output
 
 
 def test_main_reports_api_error(monkeypatch, capsys, tmp_path: Path) -> None:

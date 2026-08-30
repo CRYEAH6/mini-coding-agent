@@ -24,6 +24,7 @@ SYSTEM_PROMPT = """你是一个在本地项目中工作的编程智能体。
 文件路径必须使用相对工作目录的路径。修改后应尽量运行相关测试。
 在较大修改前可使用 git_checkpoint 保存本地检查点，并使用 git_diff 检查实际改动。
 敏感 shell 命令会请求用户确认，高风险命令默认会被安全策略阻止，请优先使用非破坏性方案。
+run_command 默认禁止网络；确实需要联网时设置 network_access=true，并等待用户确认。
 用户拒绝某项操作后，应尊重该决定并调整方案，不要反复请求同一操作。
 工具失败时请阅读错误信息并调整方案，不要盲目重复相同调用。
 完成任务后停止调用工具，用简洁文字总结修改和验证结果。
@@ -354,7 +355,11 @@ def _describe_tool_call(name: str, arguments: str) -> str:
     if name == "run_command":
         executable = _command_executable(parsed.get("command"))
         timeout = parsed.get("timeout_seconds", "default")
-        return f"（program={executable}，timeout={timeout}）"
+        network = parsed.get("network_access", False)
+        return (
+            f"（program={executable}，timeout={timeout}，"
+            f"network={network}）"
+        )
     if name == "git_status":
         return ""
     if name == "git_diff":
