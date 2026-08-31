@@ -169,3 +169,19 @@ def test_context_rejects_invalid_persisted_state() -> None:
             "system",
             {"summary_lines": [42], "omitted_summary_lines": 0},
         )
+
+
+def test_runtime_context_is_injected_but_not_persisted() -> None:
+    manager = ContextManager(10_000)
+    manager.start("system")
+    manager.set_runtime_context("- [用户偏好] README 使用中文")
+
+    prepared = manager.prepare(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "编写 README"},
+        ]
+    )
+
+    assert "README 使用中文" in prepared.messages[0]["content"]
+    assert "runtime" not in manager.export_state()

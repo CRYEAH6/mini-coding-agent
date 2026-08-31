@@ -10,6 +10,7 @@ from openai import APIError
 from mini_agent.agent import AgentResult, CodingAgent, StepLimitError
 from mini_agent.client import DeepSeekClient
 from mini_agent.config import ConfigurationError, Settings
+from mini_agent.memory import CATEGORY_LABELS, MemoryError, MemoryStore
 from mini_agent.session import (
     OpenedSession,
     SessionError,
@@ -67,6 +68,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             sandbox_mode=args.sandbox_mode,
         )
         client = DeepSeekClient(settings)
+        memory_store = MemoryStore(workspace)
         agent = CodingAgent(
             client,
             tools,
@@ -74,6 +76,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_context_chars=settings.max_context_chars,
             event_handler=output.event,
             text_handler=output.write,
+            memory_store=memory_store,
         )
         session_store = SessionStore(workspace)
         opened_session = session_store.open_active()
@@ -90,13 +93,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             max_context_chars=settings.max_context_chars,
             dangerous_commands=args.allow_dangerous_commands,
             sandbox_mode=args.sandbox_mode,
+            memory_count=len(memory_store.list_memories()),
         )
         _print_opened_session(opened_session)
-    except (ConfigurationError, SessionError, ValueError) as exc:
+    except (ConfigurationError, SessionError, MemoryError, ValueError) as exc:
         print(f"配置错误：{exc}")
         return 2
 
-    return _run_interactive(agent, output, session_store, current_session)
+    return _run_interactive(
+        agent,
+        output,
+        session_store,
+        current_session,
+        memory_store,
+    )
 
 
 class TerminalOutput:
@@ -163,6 +173,7 @@ def _run_interactive(
     output: TerminalOutput,
     session_store: SessionStore,
     current_session: SessionRecord,
+    memory_store: MemoryStore,
 ) -> int:
     """Keep one Agent session alive until the user explicitly exits."""
     print("交互模式已启动。输入 /help 查看命令，输入 /exit 退出。")
@@ -202,6 +213,32 @@ def _run_interactive(
             continue
         if task == "/sessions":
             _print_sessions(session_store, current_session.session_id)
+            continue
+        if task == "/memories":
+            _print_memories(memory_store)
+            continue
+        if task == "/remember" or task.startswith("/remember "):
+            content = _command_argument(task)
+            if content is None:
+                print("用法：/remember 要长期记住的内容")
+                continue
+            try:
+                record, created = memory_store.remember(content)
+                action = "已保存" if created else "已存在，已刷新"
+                print(f"{action}长期记忆：{record.memory_id}")
+            except (MemoryError, ValueError) as exc:
+                print(f"保存长期记忆失败：{exc}")
+            continue
+        if task == "/forget" or task.startswith("/forget "):
+            memory_id = _command_argument(task)
+            if memory_id is None:
+                print("用法：/forget 记忆ID")
+                continue
+            try:
+                removed = memory_store.forget(memory_id)
+                print(f"已删除长期记忆：{removed.memory_id}")
+            except MemoryError as exc:
+                print(f"删除长期记忆失败：{exc}")
             continue
         if task == "/help":
             _print_interactive_help()
@@ -311,6 +348,9 @@ def _print_interactive_help() -> None:
     print("  /sessions  查看当前工作目录的历史会话")
     print("  /switch 会话ID  切换到指定会话")
     print("  /delete 会话ID  确认后删除指定会话")
+    print("  /remember 内容  手动保存一条长期记忆")
+    print("  /memories  查看当前工作目录的长期记忆")
+    print("  /forget 记忆ID  删除一条长期记忆")
     print("  /exit  结束会话")
     print("  /quit  结束会话")
 
@@ -346,6 +386,23 @@ def _print_sessions(session_store: SessionStore, current_id: str) -> None:
             f"{marker} {record.session_id} | {record.turn_count} 轮 | "
             f"{record.updated_at} | {record.title}"
         )
+
+
+def _print_memories(memory_store: MemoryStore) -> None:
+    """Print durable memories without exposing storage implementation details."""
+    try:
+        records = memory_store.list_memories()
+    except MemoryError as exc:
+        print(f"读取长期记忆失败：{exc}")
+        return
+    if not records:
+        print("当前工作目录还没有长期记忆。")
+        return
+    print("当前工作目录的长期记忆：")
+    for record in records:
+        label = CATEGORY_LABELS[record.category]
+        source = "手动" if record.source == "manual" else "自动"
+        print(f"  {record.memory_id} | {label} | {source} | {record.content}")
 
 
 def _command_argument(command: str) -> Optional[str]:
@@ -392,6 +449,7 @@ def _print_startup(
     max_context_chars: int,
     dangerous_commands: bool,
     sandbox_mode: str,
+    memory_count: int = 0,
 ) -> None:
     """Print a compact, secret-free run configuration summary."""
     safety = (
@@ -407,3 +465,4 @@ def _print_startup(
     print(f"安全模式：{safety}\n")
     isolation = "macOS 系统沙箱" if sandbox_mode == STRICT_MODE else "策略检查"
     print(f"命令隔离：{isolation}\n")
+    print(f"长期记忆：{memory_count} 条（按工作目录隔离）\n")

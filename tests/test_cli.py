@@ -129,6 +129,46 @@ def test_interactive_mode_keeps_accepting_tasks_until_exit(
     assert "会话已结束" in output
 
 
+def test_interactive_memory_management_commands(
+    monkeypatch,
+    capsys,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("MINI_AGENT_SESSION_DIR", str(tmp_path / "sessions"))
+    monkeypatch.setenv("MINI_AGENT_MEMORY_DIR", str(tmp_path / "memories"))
+    monkeypatch.setattr(
+        Settings,
+        "from_env",
+        Mock(return_value=Settings(api_key="test-key")),
+    )
+    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(
+        "mini_agent.memory.secrets.token_hex",
+        Mock(return_value="a1b2c3d4"),
+    )
+    monkeypatch.setattr(
+        "builtins.input",
+        Mock(
+            side_effect=[
+                "/remember README 使用中文",
+                "/memories",
+                "/forget mem-a1b2c3d4",
+                "/memories",
+                "/exit",
+            ]
+        ),
+    )
+
+    exit_code = main(["--workspace", str(tmp_path)])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "已保存长期记忆：mem-a1b2c3d4" in output
+    assert "README 使用中文" in output
+    assert "已删除长期记忆：mem-a1b2c3d4" in output
+    assert "当前工作目录还没有长期记忆" in output
+
+
 def test_confirmation_accepts_explicit_yes(monkeypatch, capsys) -> None:
     monkeypatch.setattr("builtins.input", Mock(return_value="y"))
     request = ApprovalRequest(

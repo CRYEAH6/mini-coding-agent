@@ -127,6 +127,38 @@ def test_agent_keeps_history_across_interactive_turns(tmp_path: Path) -> None:
     assert client.requests[1][-1]["content"] == "再增加暂停功能"
 
 
+def test_agent_retrieves_and_learns_long_term_memory(tmp_path: Path) -> None:
+    class FakeMemoryStore:
+        def __init__(self) -> None:
+            self.learned = []
+
+        def build_context(self, task: str):
+            assert task == "编写项目说明"
+            return "- [用户偏好] README 使用中文", 1
+
+        def learn_from_turn(self, task: str):
+            self.learned.append(task)
+            return [object()]
+
+    memory_store = FakeMemoryStore()
+    client = FakeClient([_message(content="说明已完成")])
+    events = []
+    agent = CodingAgent(
+        client,
+        ToolRegistry(tmp_path),
+        memory_store=memory_store,
+        event_handler=events.append,
+    )
+
+    result = agent.run_turn("编写项目说明")
+
+    assert result.content == "说明已完成"
+    assert "README 使用中文" in client.requests[0][0]["content"]
+    assert memory_store.learned == ["编写项目说明"]
+    assert any("已检索 1 条" in event for event in events)
+    assert any("已自动保存 1 条" in event for event in events)
+
+
 def test_agent_exports_and_restores_persistent_session(tmp_path: Path) -> None:
     first_agent = CodingAgent(
         FakeClient([_message(content="第一轮完成")]),

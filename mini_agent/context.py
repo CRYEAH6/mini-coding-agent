@@ -40,12 +40,14 @@ class ContextManager:
         self._max_chars = max_chars
         self._keep_recent_rounds = keep_recent_rounds
         self._base_system_prompt = ""
+        self._runtime_context = ""
         self._summary_lines: list[str] = []
         self._omitted_summary_lines = 0
 
     def start(self, system_prompt: str) -> None:
         """Reset compaction state for a new user task."""
         self._base_system_prompt = system_prompt
+        self._runtime_context = ""
         self._summary_lines.clear()
         self._omitted_summary_lines = 0
 
@@ -53,6 +55,10 @@ class ContextManager:
     def system_content(self) -> str:
         """Return the current system prompt including compacted summaries."""
         return self._system_content()
+
+    def set_runtime_context(self, content: str) -> None:
+        """Set non-persistent context used only for the current user turn."""
+        self._runtime_context = content.strip()
 
     def export_state(self) -> Mapping[str, Any]:
         """Return JSON-compatible compaction state for session persistence."""
@@ -77,6 +83,7 @@ class ContextManager:
             raise ContextLimitError("会话中的上下文省略计数无效。")
 
         self._base_system_prompt = system_prompt
+        self._runtime_context = ""
         self._summary_lines = list(summary_lines)
         self._omitted_summary_lines = omitted
 
@@ -86,6 +93,8 @@ class ContextManager:
     ) -> CompactionResult:
         """Return messages that fit the configured approximate budget."""
         prepared = [dict(message) for message in messages]
+        if prepared and prepared[0].get("role") == "system":
+            prepared[0]["content"] = self._system_content()
         estimated = _estimate_chars(prepared)
         if estimated <= self._max_chars:
             return CompactionResult(prepared, 0, estimated, 0)
@@ -159,16 +168,20 @@ class ContextManager:
         return result
 
     def _system_content(self) -> str:
-        if not self._summary_lines:
-            return self._base_system_prompt
-        lines = list(self._summary_lines)
-        if self._omitted_summary_lines:
-            lines.insert(
-                0,
-                f"- 更早的 {self._omitted_summary_lines} 条工具记录已省略。",
+        sections = [self._base_system_prompt]
+        if self._summary_lines:
+            lines = list(self._summary_lines)
+            if self._omitted_summary_lines:
+                lines.insert(
+                    0,
+                    f"- 更早的 {self._omitted_summary_lines} 条工具记录已省略。",
+                )
+            sections.append("[较早工具历史摘要]\n" + "\n".join(lines))
+        if self._runtime_context:
+            sections.append(
+                "[与当前任务相关的长期记忆]\n" + self._runtime_context
             )
-        summary = "\n".join(lines)
-        return f"{self._base_system_prompt}\n[较早工具历史摘要]\n{summary}"
+        return "\n".join(sections)
 
     def _record_round(self, round_messages: Sequence[Mapping[str, Any]]) -> None:
         if not round_messages:

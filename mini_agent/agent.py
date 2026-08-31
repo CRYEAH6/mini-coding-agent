@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping, Optional, Sequence
 
 from mini_agent.client import DeepSeekClient, TextHandler
 from mini_agent.context import ContextManager, validate_history
+from mini_agent.memory import MemoryError, MemoryStore
 from mini_agent.tools import ToolRegistry, ToolResult
 
 
@@ -66,6 +67,7 @@ class CodingAgent:
         max_context_chars: int = 200_000,
         event_handler: Optional[EventHandler] = None,
         text_handler: Optional[TextHandler] = None,
+        memory_store: Optional[MemoryStore] = None,
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps 必须大于 0。")
@@ -75,6 +77,7 @@ class CodingAgent:
         self._context = ContextManager(max_context_chars)
         self._emit = event_handler or (lambda _: None)
         self._stream_text = text_handler
+        self._memory_store = memory_store
         self._messages: list[Mapping[str, Any]] = []
         self.reset_session()
 
@@ -114,12 +117,49 @@ class CodingAgent:
         if not isinstance(task, str) or not task.strip():
             raise ValueError("任务内容不能为空。")
 
-        self._messages.append({"role": "user", "content": task.strip()})
+        normalized_task = task.strip()
+        self._prepare_memory_context(normalized_task)
+        self._messages.append({"role": "user", "content": normalized_task})
         try:
-            return self._complete_turn()
+            result = self._complete_turn()
+            self._learn_from_turn(normalized_task)
+            return result
         except (Exception, KeyboardInterrupt) as exc:
             self._record_interruption(exc)
             raise
+
+    def _prepare_memory_context(self, task: str) -> None:
+        """Retrieve relevant durable memories without blocking the task."""
+        context = ""
+        count = 0
+        if self._memory_store is not None:
+            try:
+                context, count = self._memory_store.build_context(task)
+            except MemoryError as exc:
+                self._emit(
+                    f"[记忆] 读取失败，本轮将忽略长期记忆：{exc}"
+                )
+        self._context.set_runtime_context(context)
+        self._messages[0] = {
+            "role": "system",
+            "content": self._context.system_content,
+        }
+        if count:
+            self._emit(
+                f"[记忆] 已检索 {count} 条与当前任务相关的长期记忆。"
+            )
+
+    def _learn_from_turn(self, task: str) -> None:
+        """Persist explicit durable facts after a successful turn."""
+        if self._memory_store is None:
+            return
+        try:
+            learned = self._memory_store.learn_from_turn(task)
+        except (MemoryError, ValueError) as exc:
+            self._emit(f"[记忆] 自动保存失败：{exc}")
+            return
+        if learned:
+            self._emit(f"[记忆] 已自动保存 {len(learned)} 条长期记忆。")
 
     def _complete_turn(self) -> AgentResult:
         """Run the model-tool loop for the user message already appended."""
