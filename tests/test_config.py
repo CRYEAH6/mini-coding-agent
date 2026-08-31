@@ -14,6 +14,7 @@ def test_settings_load_required_key_and_defaults() -> None:
     assert settings.timeout_seconds == 60.0
     assert settings.max_retries == 2
     assert settings.max_context_chars == 200_000
+    assert settings.effective_summary_model == settings.model
 
 
 def test_settings_load_overrides() -> None:
@@ -25,6 +26,7 @@ def test_settings_load_overrides() -> None:
             "DEEPSEEK_TIMEOUT_SECONDS": "30.5",
             "DEEPSEEK_MAX_RETRIES": "4",
             "DEEPSEEK_MAX_CONTEXT_CHARS": "50000",
+            "DEEPSEEK_SUMMARY_MODEL": "summary-model",
         }
     )
 
@@ -33,6 +35,7 @@ def test_settings_load_overrides() -> None:
     assert settings.timeout_seconds == 30.5
     assert settings.max_retries == 4
     assert settings.max_context_chars == 50_000
+    assert settings.effective_summary_model == "summary-model"
 
 
 def test_settings_reject_missing_api_key() -> None:

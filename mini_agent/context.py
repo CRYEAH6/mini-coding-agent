@@ -1,14 +1,17 @@
-"""Deterministic conversation-history compaction."""
+"""Conversation-history compaction with semantic-summary fallback."""
 
 from dataclasses import dataclass
 import json
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Optional, Sequence
 
 
 DEFAULT_MAX_CONTEXT_CHARS = 200_000
 RECENT_ROUNDS_TO_KEEP = 2
 MAX_SUMMARY_LINES = 30
 ARGUMENT_PREVIEW_CHARS = 180
+MAX_SEMANTIC_SUMMARY_CHARS = 6_000
+
+SummaryGenerator = Callable[[str, Sequence[Mapping[str, Any]]], str]
 
 
 class ContextLimitError(RuntimeError):
@@ -23,6 +26,8 @@ class CompactionResult:
     removed_rounds: int
     estimated_chars: int
     removed_turns: int = 0
+    semantic_summaries: int = 0
+    summary_fallbacks: int = 0
 
 
 class ContextManager:
@@ -32,6 +37,7 @@ class ContextManager:
         self,
         max_chars: int = DEFAULT_MAX_CONTEXT_CHARS,
         keep_recent_rounds: int = RECENT_ROUNDS_TO_KEEP,
+        summary_generator: Optional[SummaryGenerator] = None,
     ) -> None:
         if max_chars <= 0:
             raise ValueError("max_chars 必须大于 0。")
@@ -39,8 +45,10 @@ class ContextManager:
             raise ValueError("keep_recent_rounds 不能小于 0。")
         self._max_chars = max_chars
         self._keep_recent_rounds = keep_recent_rounds
+        self._summary_generator = summary_generator
         self._base_system_prompt = ""
         self._runtime_context = ""
+        self._semantic_summary = ""
         self._summary_lines: list[str] = []
         self._omitted_summary_lines = 0
 
@@ -48,6 +56,7 @@ class ContextManager:
         """Reset compaction state for a new user task."""
         self._base_system_prompt = system_prompt
         self._runtime_context = ""
+        self._semantic_summary = ""
         self._summary_lines.clear()
         self._omitted_summary_lines = 0
 
@@ -63,6 +72,7 @@ class ContextManager:
     def export_state(self) -> Mapping[str, Any]:
         """Return JSON-compatible compaction state for session persistence."""
         return {
+            "semantic_summary": self._semantic_summary,
             "summary_lines": list(self._summary_lines),
             "omitted_summary_lines": self._omitted_summary_lines,
         }
@@ -73,6 +83,11 @@ class ContextManager:
             raise ContextLimitError("会话中的上下文状态必须是对象。")
         summary_lines = state.get("summary_lines", [])
         omitted = state.get("omitted_summary_lines", 0)
+        semantic_summary = state.get("semantic_summary", "")
+        if not isinstance(semantic_summary, str):
+            raise ContextLimitError("会话中的语义摘要格式无效。")
+        if len(semantic_summary) > MAX_SEMANTIC_SUMMARY_CHARS:
+            raise ContextLimitError("会话中的语义摘要过长。")
         if not isinstance(summary_lines, list) or not all(
             isinstance(line, str) for line in summary_lines
         ):
@@ -84,6 +99,7 @@ class ContextManager:
 
         self._base_system_prompt = system_prompt
         self._runtime_context = ""
+        self._semantic_summary = semantic_summary
         self._summary_lines = list(summary_lines)
         self._omitted_summary_lines = omitted
 
@@ -97,7 +113,7 @@ class ContextManager:
             prepared[0]["content"] = self._system_content()
         estimated = _estimate_chars(prepared)
         if estimated <= self._max_chars:
-            return CompactionResult(prepared, 0, estimated, 0)
+            return CompactionResult(prepared, 0, estimated, 0, 0, 0)
         if len(prepared) < 2:
             raise ContextLimitError("上下文缺少必要的 system 或 user 消息。")
 
@@ -107,10 +123,22 @@ class ContextManager:
         turns = _split_turns(prepared[1:])
         removed_rounds = 0
         removed_turns = 0
+        semantic_summaries = 0
+        summary_fallbacks = 0
 
         while len(turns) > 1:
-            self._record_turn(turns.pop(0))
-            removed_turns += 1
+            removed_batch = []
+            while len(turns) > 1:
+                removed_batch.append(turns.pop(0))
+                removed_turns += 1
+                candidate = self._build_messages(system_message, turns)
+                if _estimate_chars(candidate) <= self._max_chars:
+                    break
+            semantic_count, fallback_count = self._summarize_turns(
+                removed_batch
+            )
+            semantic_summaries += semantic_count
+            summary_fallbacks += fallback_count
             candidate = self._build_messages(system_message, turns)
             estimated = _estimate_chars(candidate)
             if estimated <= self._max_chars:
@@ -119,6 +147,8 @@ class ContextManager:
                     removed_rounds,
                     estimated,
                     removed_turns,
+                    semantic_summaries,
+                    summary_fallbacks,
                 )
 
         latest_turn = _split_turn_units(turns[0])
@@ -126,10 +156,21 @@ class ContextManager:
             unit for unit in latest_turn if _is_tool_round(unit)
         ]
         while len(removable_rounds) > self._keep_recent_rounds:
-            oldest = removable_rounds.pop(0)
-            latest_turn.remove(oldest)
-            self._record_round(oldest)
-            removed_rounds += 1
+            removed_batch = []
+            while len(removable_rounds) > self._keep_recent_rounds:
+                oldest = removable_rounds.pop(0)
+                latest_turn.remove(oldest)
+                removed_batch.append(oldest)
+                removed_rounds += 1
+                turns[0] = [message for unit in latest_turn for message in unit]
+                candidate = self._build_messages(system_message, turns)
+                if _estimate_chars(candidate) <= self._max_chars:
+                    break
+            semantic_count, fallback_count = self._summarize_rounds(
+                removed_batch
+            )
+            semantic_summaries += semantic_count
+            summary_fallbacks += fallback_count
             turns[0] = [message for unit in latest_turn for message in unit]
             candidate = self._build_messages(system_message, turns)
             estimated = _estimate_chars(candidate)
@@ -139,6 +180,8 @@ class ContextManager:
                     removed_rounds,
                     estimated,
                     removed_turns,
+                    semantic_summaries,
+                    summary_fallbacks,
                 )
 
         candidate = self._build_messages(system_message, turns)
@@ -153,6 +196,8 @@ class ContextManager:
             removed_rounds,
             estimated,
             removed_turns,
+            semantic_summaries,
+            summary_fallbacks,
         )
 
     def _build_messages(
@@ -169,6 +214,10 @@ class ContextManager:
 
     def _system_content(self) -> str:
         sections = [self._base_system_prompt]
+        if self._semantic_summary:
+            sections.append(
+                "[较早对话语义摘要]\n" + self._semantic_summary
+            )
         if self._summary_lines:
             lines = list(self._summary_lines)
             if self._omitted_summary_lines:
@@ -181,6 +230,84 @@ class ContextManager:
             sections.append(
                 "[与当前任务相关的长期记忆]\n" + self._runtime_context
             )
+        return "\n".join(sections)
+
+    def _summarize_turns(
+        self,
+        turns: Sequence[Sequence[Mapping[str, Any]]],
+    ) -> tuple[int, int]:
+        messages = [message for turn in turns for message in turn]
+        return self._generate_summary(
+            messages,
+            fallback=lambda: self._record_turn_batch(turns),
+        )
+
+    def _summarize_rounds(
+        self,
+        rounds: Sequence[Sequence[Mapping[str, Any]]],
+    ) -> tuple[int, int]:
+        messages = [
+            message
+            for round_messages in rounds
+            for message in round_messages
+        ]
+        return self._generate_summary(
+            messages,
+            fallback=lambda: self._record_round_batch(rounds),
+        )
+
+    def _generate_summary(
+        self,
+        messages: Sequence[Mapping[str, Any]],
+        *,
+        fallback: Callable[[], None],
+    ) -> tuple[int, int]:
+        if not messages:
+            return 0, 0
+        if self._summary_generator is None:
+            fallback()
+            return 0, 0
+        existing = self._combined_summary()
+        try:
+            generated = self._summary_generator(existing, messages).strip()
+            if not generated:
+                raise ValueError("摘要内容为空。")
+            if len(generated) > MAX_SEMANTIC_SUMMARY_CHARS:
+                raise ValueError("摘要内容超过长度上限。")
+        except Exception:
+            fallback()
+            return 0, 1
+        self._semantic_summary = generated
+        self._summary_lines.clear()
+        self._omitted_summary_lines = 0
+        return 1, 0
+
+    def _record_turn_batch(
+        self,
+        turns: Sequence[Sequence[Mapping[str, Any]]],
+    ) -> None:
+        for turn in turns:
+            self._record_turn(turn)
+
+    def _record_round_batch(
+        self,
+        rounds: Sequence[Sequence[Mapping[str, Any]]],
+    ) -> None:
+        for round_messages in rounds:
+            self._record_round(round_messages)
+
+    def _combined_summary(self) -> str:
+        sections = []
+        if self._semantic_summary:
+            sections.append(self._semantic_summary)
+        if self._summary_lines:
+            lines = list(self._summary_lines)
+            if self._omitted_summary_lines:
+                lines.insert(
+                    0,
+                    f"- 更早的 {self._omitted_summary_lines} 条记录已省略。",
+                )
+            sections.append("\n".join(lines))
         return "\n".join(sections)
 
     def _record_round(self, round_messages: Sequence[Mapping[str, Any]]) -> None:

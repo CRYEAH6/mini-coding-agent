@@ -344,7 +344,11 @@ def _utc_now() -> str:
 
 
 def _empty_context_state() -> Mapping[str, Any]:
-    return {"summary_lines": [], "omitted_summary_lines": 0}
+    return {
+        "semantic_summary": "",
+        "summary_lines": [],
+        "omitted_summary_lines": 0,
+    }
 
 
 def _validate_context_state(state: Mapping[str, Any]) -> None:

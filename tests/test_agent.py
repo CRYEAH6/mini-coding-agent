@@ -338,13 +338,17 @@ def test_agent_compacts_old_tool_rounds(tmp_path: Path) -> None:
         ToolRegistry(tmp_path),
         max_context_chars=2_800,
         event_handler=events.append,
+        summary_generator=lambda existing, removed: "已读取较早的大文件。",
     )
 
     result = agent.run("依次读取三个文件")
 
     assert result.content == "读取完成。"
     assert result.compacted_rounds >= 1
+    assert result.semantic_summaries >= 1
+    assert result.summary_fallbacks == 0
     assert any(event.startswith("[上下文] 已压缩") for event in events)
+    assert any("摘要模型" in event for event in events)
 
 
 def test_tool_description_does_not_echo_sensitive_content() -> None:

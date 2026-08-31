@@ -47,6 +47,28 @@ def test_create_message_omits_empty_tools() -> None:
     completion.assert_called_once_with(model="test-model", messages=messages)
 
 
+def test_create_message_can_override_model_for_auxiliary_requests() -> None:
+    message = SimpleNamespace(content="summary")
+    completion = Mock(
+        return_value=SimpleNamespace(
+            choices=[SimpleNamespace(message=message)]
+        )
+    )
+    fake_client = SimpleNamespace(
+        chat=SimpleNamespace(completions=SimpleNamespace(create=completion))
+    )
+    client = DeepSeekClient(_settings(), client=fake_client)
+    messages = [{"role": "user", "content": "Summarize"}]
+
+    result = client.create_message(messages, model="summary-model")
+
+    assert result is message
+    completion.assert_called_once_with(
+        model="summary-model",
+        messages=messages,
+    )
+
+
 def test_create_message_rejects_empty_choices() -> None:
     completion = Mock(return_value=SimpleNamespace(choices=[]))
     fake_client = SimpleNamespace(

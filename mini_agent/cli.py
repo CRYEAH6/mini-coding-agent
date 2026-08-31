@@ -17,6 +17,7 @@ from mini_agent.session import (
     SessionRecord,
     SessionStore,
 )
+from mini_agent.summary import MAX_SUMMARY_CHARS, SemanticSummarizer
 from mini_agent.tools import ToolRegistry
 from mini_agent.tools.approval import ApprovalRequest
 from mini_agent.tools.sandbox import SANDBOX_MODES, STRICT_MODE
@@ -68,6 +69,15 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             sandbox_mode=args.sandbox_mode,
         )
         client = DeepSeekClient(settings)
+        summarizer = SemanticSummarizer(
+            client,
+            settings.effective_summary_model,
+            max_summary_chars=min(
+                MAX_SUMMARY_CHARS,
+                max(200, settings.max_context_chars // 5),
+            ),
+            event_handler=output.event,
+        )
         memory_store = MemoryStore(workspace)
         agent = CodingAgent(
             client,
@@ -77,6 +87,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             event_handler=output.event,
             text_handler=output.write,
             memory_store=memory_store,
+            summary_generator=summarizer.summarize,
         )
         session_store = SessionStore(workspace)
         opened_session = session_store.open_active()
@@ -94,6 +105,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             dangerous_commands=args.allow_dangerous_commands,
             sandbox_mode=args.sandbox_mode,
             memory_count=len(memory_store.list_memories()),
+            summary_model=settings.effective_summary_model,
         )
         _print_opened_session(opened_session)
     except (ConfigurationError, SessionError, MemoryError, ValueError) as exc:
@@ -166,6 +178,10 @@ def _run_task(
         print(f"[统计] 上下文压缩 {result.compacted_rounds} 个较早工具轮次。")
     if result.compacted_turns:
         print(f"[统计] 上下文压缩 {result.compacted_turns} 个较早对话轮次。")
+    if result.semantic_summaries:
+        print(f"[统计] 语义摘要模型调用 {result.semantic_summaries} 次。")
+    if result.summary_fallbacks:
+        print(f"[统计] 语义摘要回退 {result.summary_fallbacks} 次。")
 
 
 def _run_interactive(
@@ -450,6 +466,7 @@ def _print_startup(
     dangerous_commands: bool,
     sandbox_mode: str,
     memory_count: int = 0,
+    summary_model: Optional[str] = None,
 ) -> None:
     """Print a compact, secret-free run configuration summary."""
     safety = (
@@ -462,6 +479,7 @@ def _print_startup(
     print(f"工作目录：{workspace}")
     print(f"最大步骤：{max_steps}")
     print(f"上下文预算：{max_context_chars} 字符")
+    print(f"摘要模型：{summary_model or model}")
     print(f"安全模式：{safety}\n")
     isolation = "macOS 系统沙箱" if sandbox_mode == STRICT_MODE else "策略检查"
     print(f"命令隔离：{isolation}\n")

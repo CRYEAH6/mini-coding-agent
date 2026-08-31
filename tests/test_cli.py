@@ -58,6 +58,7 @@ def test_startup_summary_is_clear_and_secret_free(capsys) -> None:
     assert "工作目录：/tmp/example" in output
     assert "最大步骤：12" in output
     assert "上下文预算：100000 字符" in output
+    assert "摘要模型：test-model" in output
     assert "高风险命令默认拦截" in output
     assert "命令隔离：macOS 系统沙箱" in output
 

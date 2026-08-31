@@ -64,10 +64,11 @@ class DeepSeekClient:
         messages: Sequence[Mapping[str, Any]],
         tools: Optional[Sequence[Mapping[str, Any]]] = None,
         on_text: Optional[TextHandler] = None,
+        model: Optional[str] = None,
     ) -> Any:
         """Return one assistant message, optionally streaming text chunks."""
         request: dict[str, Any] = {
-            "model": self._settings.model,
+            "model": model or self._settings.model,
             "messages": list(messages),
         }
         if tools:

@@ -142,6 +142,118 @@ def test_context_compacts_complete_old_conversation_turn() -> None:
     assert result.estimated_chars <= 700
 
 
+def test_context_uses_semantic_summary_only_after_budget_is_exceeded() -> None:
+    calls = []
+
+    def summarize(existing, removed):
+        calls.append((existing, removed))
+        return "- 用户目标：创建飞机大战\n- 结果：第一轮已完成"
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "创建飞机大战"},
+        *_round(1, output_size=500),
+        {"role": "assistant", "content": "第一轮已完成" + "x" * 400},
+        {"role": "user", "content": "增加暂停功能"},
+    ]
+    manager = ContextManager(
+        max_chars=700,
+        keep_recent_rounds=1,
+        summary_generator=summarize,
+    )
+    manager.start("system")
+
+    result = manager.prepare(messages)
+
+    assert result.semantic_summaries == 1
+    assert result.summary_fallbacks == 0
+    assert len(calls) == 1
+    assert calls[0][0] == ""
+    assert calls[0][1][0]["content"] == "创建飞机大战"
+    assert "较早对话语义摘要" in result.messages[0]["content"]
+    assert "第一轮已完成" in result.messages[0]["content"]
+    assert manager.export_state()["semantic_summary"].startswith("- 用户目标")
+
+
+def test_context_does_not_call_summary_model_within_budget() -> None:
+    calls = []
+    manager = ContextManager(
+        max_chars=10_000,
+        summary_generator=lambda existing, removed: calls.append(removed),
+    )
+    manager.start("system")
+
+    manager.prepare(
+        [
+            {"role": "system", "content": "system"},
+            {"role": "user", "content": "短任务"},
+        ]
+    )
+
+    assert calls == []
+
+
+def test_context_falls_back_when_semantic_summary_fails() -> None:
+    def fail_summary(existing, removed):
+        raise RuntimeError("temporary API failure")
+
+    messages = [
+        {"role": "system", "content": "system"},
+        {"role": "user", "content": "创建飞机大战"},
+        *_round(1, output_size=500),
+        {"role": "assistant", "content": "第一轮已完成" + "x" * 400},
+        {"role": "user", "content": "增加暂停功能"},
+    ]
+    manager = ContextManager(
+        max_chars=700,
+        keep_recent_rounds=1,
+        summary_generator=fail_summary,
+    )
+    manager.start("system")
+
+    result = manager.prepare(messages)
+
+    assert result.semantic_summaries == 0
+    assert result.summary_fallbacks == 1
+    assert "较早工具历史摘要" in result.messages[0]["content"]
+    assert "创建飞机大战" in result.messages[0]["content"]
+
+
+def test_context_merges_restored_summary_with_newly_removed_history() -> None:
+    received = []
+
+    def summarize(existing, removed):
+        received.append((existing, removed))
+        return "旧项目已创建；新功能已完成"
+
+    manager = ContextManager(
+        max_chars=450,
+        summary_generator=summarize,
+    )
+    manager.restore(
+        "system",
+        {
+            "semantic_summary": "旧项目已创建",
+            "summary_lines": [],
+            "omitted_summary_lines": 0,
+        },
+    )
+    messages = [
+        {"role": "system", "content": manager.system_content},
+        {"role": "user", "content": "增加功能"},
+        {"role": "assistant", "content": "完成" + "x" * 400},
+        {"role": "user", "content": "继续修改"},
+    ]
+
+    result = manager.prepare(messages)
+
+    assert result.semantic_summaries == 1
+    assert received[0][0] == "旧项目已创建"
+    assert manager.export_state()["semantic_summary"] == (
+        "旧项目已创建；新功能已完成"
+    )
+
+
 def test_context_compaction_state_can_be_restored() -> None:
     manager = ContextManager()
     manager.restore(
@@ -168,6 +280,16 @@ def test_context_rejects_invalid_persisted_state() -> None:
         manager.restore(
             "system",
             {"summary_lines": [42], "omitted_summary_lines": 0},
+        )
+
+    with pytest.raises(ContextLimitError, match="语义摘要格式"):
+        manager.restore(
+            "system",
+            {
+                "semantic_summary": 42,
+                "summary_lines": [],
+                "omitted_summary_lines": 0,
+            },
         )
 
 

@@ -21,6 +21,12 @@ class Settings:
     timeout_seconds: float = 60.0
     max_retries: int = 2
     max_context_chars: int = 200_000
+    summary_model: Optional[str] = None
+
+    @property
+    def effective_summary_model(self) -> str:
+        """Use the main model unless a dedicated summary model is configured."""
+        return self.summary_model or self.model
 
     @classmethod
     def from_env(cls, environ: Optional[Mapping[str, str]] = None) -> "Settings":
@@ -56,6 +62,7 @@ class Settings:
             ),
             "DEEPSEEK_MAX_CONTEXT_CHARS",
         )
+        summary_model = environ.get("DEEPSEEK_SUMMARY_MODEL", "").strip()
 
         return cls(
             api_key=api_key,
@@ -64,6 +71,7 @@ class Settings:
             timeout_seconds=timeout_seconds,
             max_retries=max_retries,
             max_context_chars=max_context_chars,
+            summary_model=summary_model or None,
         )
 
 

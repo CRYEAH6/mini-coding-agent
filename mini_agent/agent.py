@@ -8,7 +8,7 @@ import shlex
 from typing import Any, Callable, Mapping, Optional, Sequence
 
 from mini_agent.client import DeepSeekClient, TextHandler
-from mini_agent.context import ContextManager, validate_history
+from mini_agent.context import ContextManager, SummaryGenerator, validate_history
 from mini_agent.memory import MemoryError, MemoryStore
 from mini_agent.tools import ToolRegistry, ToolResult
 
@@ -50,6 +50,8 @@ class AgentResult:
     tool_calls: int
     compacted_rounds: int
     compacted_turns: int = 0
+    semantic_summaries: int = 0
+    summary_fallbacks: int = 0
 
 
 EventHandler = Callable[[str], None]
@@ -68,13 +70,17 @@ class CodingAgent:
         event_handler: Optional[EventHandler] = None,
         text_handler: Optional[TextHandler] = None,
         memory_store: Optional[MemoryStore] = None,
+        summary_generator: Optional[SummaryGenerator] = None,
     ) -> None:
         if max_steps <= 0:
             raise ValueError("max_steps 必须大于 0。")
         self._client = client
         self._tools = tools
         self._max_steps = max_steps
-        self._context = ContextManager(max_context_chars)
+        self._context = ContextManager(
+            max_context_chars,
+            summary_generator=summary_generator,
+        )
         self._emit = event_handler or (lambda _: None)
         self._stream_text = text_handler
         self._memory_store = memory_store
@@ -166,6 +172,8 @@ class CodingAgent:
         tool_call_count = 0
         compacted_round_count = 0
         compacted_turn_count = 0
+        semantic_summary_count = 0
+        summary_fallback_count = 0
         consecutive_failures = 0
         previous_fingerprint: Optional[str] = None
         repeated_call_count = 0
@@ -184,6 +192,17 @@ class CodingAgent:
                 self._emit(
                     "[上下文] 已压缩：移除 "
                     f"{compacted.removed_turns} 个较早对话轮次。"
+                )
+            if compacted.semantic_summaries:
+                semantic_summary_count += compacted.semantic_summaries
+                self._emit(
+                    "[上下文] 已调用摘要模型生成语义摘要 "
+                    f"{compacted.semantic_summaries} 次。"
+                )
+            if compacted.summary_fallbacks:
+                summary_fallback_count += compacted.summary_fallbacks
+                self._emit(
+                    "[上下文] 语义摘要生成失败，已回退到本地确定性摘要。"
                 )
             self._emit(f"[模型 {step}/{self._max_steps}] 正在生成下一步...")
             if self._stream_text is None:
@@ -213,6 +232,8 @@ class CodingAgent:
                     tool_call_count,
                     compacted_round_count,
                     compacted_turn_count,
+                    semantic_summary_count,
+                    summary_fallback_count,
                 )
 
             for tool_call in tool_calls:
