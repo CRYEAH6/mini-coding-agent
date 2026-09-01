@@ -6,7 +6,14 @@ from unittest.mock import Mock
 import mini_agent.cli as cli_module
 import pytest
 from mini_agent.agent import AgentResult
-from mini_agent.cli import _confirm_tool_action, _print_startup, build_parser, main
+from mini_agent.cli import (
+    TerminalOutput,
+    _confirm_tool_action,
+    _print_startup,
+    _run_task,
+    build_parser,
+    main,
+)
 from mini_agent.config import ConfigurationError, Settings
 from mini_agent.session import SessionError, SessionStore
 from mini_agent.tools.approval import ApprovalRequest
@@ -128,6 +135,39 @@ def test_interactive_mode_keeps_accepting_tasks_until_exit(
     assert "已创建新会话" in output
     assert "旧会话和工作目录中的文件保持不变" in output
     assert "会话已结束" in output
+
+
+def test_run_task_prints_plain_non_streamed_response(capsys) -> None:
+    output = TerminalOutput()
+
+    _run_task(
+        lambda task: AgentResult("在的。有什么需要帮忙的吗？", 1, 0, 0),
+        "你好",
+        output,
+    )
+
+    terminal = capsys.readouterr().out
+    assert terminal == "在的。有什么需要帮忙的吗？\n"
+    assert "[回复]" not in terminal
+    assert "[完成]" not in terminal
+    assert "[统计]" not in terminal
+
+
+def test_run_task_prints_plain_streamed_response(capsys) -> None:
+    output = TerminalOutput()
+
+    def run(task):
+        output.write("流式")
+        output.write("回答")
+        return AgentResult("流式回答", 1, 0, 0)
+
+    _run_task(run, "你好", output)
+
+    terminal = capsys.readouterr().out
+    assert terminal == "流式回答\n"
+    assert "[回复]" not in terminal
+    assert "[完成]" not in terminal
+    assert "[统计]" not in terminal
 
 
 def test_interactive_memory_management_commands(

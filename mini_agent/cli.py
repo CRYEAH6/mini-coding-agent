@@ -2,7 +2,6 @@
 
 import argparse
 from pathlib import Path
-import time
 from typing import Callable, Optional, Sequence
 
 from openai import APIError
@@ -140,7 +139,6 @@ class TerminalOutput:
         if not text:
             return
         if not self._line_open:
-            print("[回复] ", end="", flush=True)
             self._line_open = True
         print(text, end="", flush=True)
         self._text_seen = True
@@ -160,28 +158,12 @@ def _run_task(
     task: str,
     output: TerminalOutput,
 ) -> None:
-    """Run one user turn and print its streamed result and statistics."""
+    """Run one user turn and print the model response without extra labels."""
     output.begin_turn()
-    started_at = time.monotonic()
     result = runner(task)
     output.finish_line()
     if not output.text_seen:
-        print(f"[回复] {result.content}")
-
-    elapsed = time.monotonic() - started_at
-    print("[完成] 本轮任务已结束")
-    print(
-        f"[统计] 模型调用 {result.steps} 次，工具执行 "
-        f"{result.tool_calls} 次，耗时 {elapsed:.1f} 秒。"
-    )
-    if result.compacted_rounds:
-        print(f"[统计] 上下文压缩 {result.compacted_rounds} 个较早工具轮次。")
-    if result.compacted_turns:
-        print(f"[统计] 上下文压缩 {result.compacted_turns} 个较早对话轮次。")
-    if result.semantic_summaries:
-        print(f"[统计] 语义摘要模型调用 {result.semantic_summaries} 次。")
-    if result.summary_fallbacks:
-        print(f"[统计] 语义摘要回退 {result.summary_fallbacks} 次。")
+        print(result.content)
 
 
 def _run_interactive(
