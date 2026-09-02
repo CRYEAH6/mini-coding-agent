@@ -1,4 +1,4 @@
-"""DeepSeek API client used by the agent loop."""
+"""OpenAI-compatible LLM client used by the agent loop."""
 
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping, Optional, Sequence
@@ -47,8 +47,8 @@ class _ToolCallBuffer:
     arguments: str = ""
 
 
-class DeepSeekClient:
-    """Send chat-completion requests through DeepSeek's compatible API."""
+class LLMClient:
+    """Send requests through an OpenAI-compatible chat-completions API."""
 
     def __init__(self, settings: Settings, client: Optional[Any] = None) -> None:
         self._settings = settings
@@ -83,7 +83,7 @@ class DeepSeekClient:
 
         response = self._client.chat.completions.create(**request)
         if not response.choices:
-            raise RuntimeError("DeepSeek API 返回了空的 choices。")
+            raise RuntimeError("模型 API 返回了空的 choices。")
         return response.choices[0].message
 
 
@@ -124,13 +124,13 @@ def _collect_stream(stream: Any, on_text: TextHandler) -> ModelMessage:
                     buffer.arguments += function.arguments
 
     if not received_delta:
-        raise RuntimeError("DeepSeek API 返回了空的流式响应。")
+        raise RuntimeError("模型 API 返回了空的流式响应。")
 
     tool_calls = []
     for index in sorted(tool_buffers):
         buffer = tool_buffers[index]
         if not buffer.call_id or not buffer.name:
-            raise RuntimeError("DeepSeek API 返回了不完整的流式工具调用。")
+            raise RuntimeError("模型 API 返回了不完整的流式工具调用。")
         tool_calls.append(
             ToolCall(
                 id=buffer.call_id,

@@ -1,9 +1,9 @@
 """Workspace-scoped file inspection and editing tools."""
 
-import os
 from pathlib import Path
-from typing import Union
+from typing import Optional, Union
 
+from mini_agent.tools.access import WorkspaceAccessManager
 from mini_agent.tools.result import ToolResult
 
 
@@ -13,13 +13,18 @@ IGNORED_NAMES = {".git", ".venv", "__pycache__"}
 
 
 class FileTools:
-    """Perform text-file operations inside one workspace."""
+    """Operate in the primary workspace and explicitly approved projects."""
 
-    def __init__(self, workspace: Union[str, Path]) -> None:
+    def __init__(
+        self,
+        workspace: Union[str, Path],
+        access_manager: Optional[WorkspaceAccessManager] = None,
+    ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         if not resolved.is_dir():
             raise ValueError(f"工作目录不存在或不是目录：{resolved}")
         self._workspace = resolved
+        self._access = access_manager or WorkspaceAccessManager(resolved)
 
     def list_files(self, path: str = ".") -> ToolResult:
         """List direct children of a workspace directory."""
@@ -34,8 +39,8 @@ class FileTools:
             entries.sort(key=lambda item: (not item.is_dir(), item.name.lower()))
             lines = []
             for item in entries[:MAX_DIRECTORY_ENTRIES]:
-                relative = item.relative_to(self._workspace).as_posix()
-                lines.append(f"{relative}/" if item.is_dir() else relative)
+                display = self._display_path(item)
+                lines.append(f"{display}/" if item.is_dir() else display)
 
             if len(entries) > MAX_DIRECTORY_ENTRIES:
                 lines.append(f"... 其余 {len(entries) - MAX_DIRECTORY_ENTRIES} 项已省略")
@@ -66,13 +71,13 @@ class FileTools:
             return ToolResult(False, "content 必须是字符串。")
 
         try:
-            target = self._resolve_path(path, must_exist=False)
+            target = self._resolve_path(path, must_exist=False, write=True)
             if target.exists() and target.is_dir():
                 return ToolResult(False, f"目标是目录，不能写入：{path}")
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_text(content, encoding="utf-8")
-            relative = target.relative_to(self._workspace).as_posix()
-            return ToolResult(True, f"已写入 {relative}（{len(content)} 个字符）。")
+            display = self._display_path(target)
+            return ToolResult(True, f"已写入 {display}（{len(content)} 个字符）。")
         except (OSError, ValueError) as exc:
             return ToolResult(False, str(exc))
 
@@ -92,7 +97,7 @@ class FileTools:
             return ToolResult(False, "old_text 不能为空。")
 
         try:
-            target = self._resolve_path(path, must_exist=True)
+            target = self._resolve_path(path, must_exist=True, write=True)
             if not target.is_file():
                 return ToolResult(False, f"目标不是文件：{path}")
 
@@ -115,18 +120,34 @@ class FileTools:
         except (OSError, ValueError) as exc:
             return ToolResult(False, str(exc))
 
-    def _resolve_path(self, path: str, *, must_exist: bool) -> Path:
-        """Resolve a relative path and reject workspace escapes."""
+    def _resolve_path(
+        self,
+        path: str,
+        *,
+        must_exist: bool,
+        write: bool = False,
+    ) -> Path:
+        """Resolve paths inside the main workspace or approved directories."""
         if not isinstance(path, str) or not path.strip():
             raise ValueError("path 必须是非空字符串。")
 
         supplied = Path(path).expanduser()
         if supplied.is_absolute():
-            raise ValueError("只允许使用工作目录内的相对路径。")
-
-        candidate = (self._workspace / supplied).resolve(strict=False)
-        if os.path.commonpath((self._workspace, candidate)) != str(self._workspace):
-            raise ValueError("路径超出了允许的工作目录。")
+            candidate = supplied.resolve(strict=False)
+            self._access.require_access(candidate, write=write)
+        else:
+            candidate = (self._workspace / supplied).resolve(strict=False)
+            try:
+                candidate.relative_to(self._workspace)
+            except ValueError as exc:
+                raise ValueError("路径超出了允许的工作目录。") from exc
         if must_exist and not candidate.exists():
             raise ValueError(f"路径不存在：{path}")
         return candidate
+
+    def _display_path(self, target: Path) -> str:
+        """Use relative paths for the main workspace and absolute paths outside it."""
+        try:
+            return target.relative_to(self._workspace).as_posix()
+        except ValueError:
+            return target.as_posix()

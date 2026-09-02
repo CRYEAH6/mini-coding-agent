@@ -189,7 +189,7 @@ class ContextManager:
         if estimated > self._max_chars:
             raise ContextLimitError(
                 "system 指令、当前用户任务和最近工具轮次已超过上下文预算，"
-                "请缩小任务范围或提高 DEEPSEEK_MAX_CONTEXT_CHARS。"
+                "请缩小任务范围或提高 MINI_AGENT_MAX_CONTEXT_CHARS。"
             )
         return CompactionResult(
             candidate,

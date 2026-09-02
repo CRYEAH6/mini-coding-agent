@@ -43,6 +43,31 @@ def test_strict_profile_opens_network_only_for_approved_command(
     assert "(allow network-outbound)" in profile
 
 
+def test_strict_profile_separates_external_read_and_write_roots(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "project"
+    temporary = tmp_path / "command-temp"
+    readable = tmp_path / "readable"
+    writable = tmp_path / "writable"
+    for directory in (workspace, temporary, readable, writable):
+        directory.mkdir()
+
+    profile = _build_profile(
+        workspace,
+        temporary,
+        allow_network=False,
+        external_read_paths=(readable, writable),
+        external_write_paths=(writable,),
+    )
+    read_rules, write_rules = profile.split("(allow file-write*", 1)
+
+    assert f'(subpath "{readable}")' in read_rules
+    assert f'(subpath "{writable}")' in read_rules
+    assert f'(subpath "{readable}")' not in write_rules
+    assert f'(subpath "{writable}")' in write_rules
+
+
 def test_strict_environment_uses_isolated_home_cache_and_path(
     tmp_path: Path,
 ) -> None:
@@ -63,14 +88,14 @@ def test_strict_environment_uses_isolated_home_cache_and_path(
     assert environment["HOME"] == str(home)
     assert environment["TMPDIR"] == str(command_tmp)
     assert environment["PATH"].split(":")[0] == str(venv_bin)
-    assert "DEEPSEEK_API_KEY" not in environment
+    assert "LLM_API_KEY" not in environment
 
 
 def test_policy_environment_removes_credential_like_variables() -> None:
     filtered = _filtered_environment(
         {
             "PATH": "/usr/bin",
-            "DEEPSEEK_API_KEY": "secret",
+            "LLM_API_KEY": "secret",
             "ACCESS_TOKEN": "token",
             "SAFE_VALUE": "visible",
         }
@@ -80,12 +105,12 @@ def test_policy_environment_removes_credential_like_variables() -> None:
 
 
 def test_policy_mode_uses_non_login_shell(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "secret")
+    monkeypatch.setenv("LLM_API_KEY", "secret")
     sandbox = CommandSandbox(tmp_path, mode="policy")
 
     with sandbox.prepare("echo hello", allow_network=False) as plan:
         assert plan.arguments == ("/bin/zsh", "-c", "echo hello")
-        assert "DEEPSEEK_API_KEY" not in plan.environment
+        assert "LLM_API_KEY" not in plan.environment
 
 
 def test_strict_mode_rejects_non_macos(monkeypatch, tmp_path: Path) -> None:

@@ -89,7 +89,7 @@ def test_semantic_summarizer_redacts_secrets_from_source() -> None:
         [
             {
                 "role": "user",
-                "content": "DEEPSEEK_API_KEY=sk-private123456",
+                "content": "LLM_API_KEY=sk-private123456",
             }
         ],
     )

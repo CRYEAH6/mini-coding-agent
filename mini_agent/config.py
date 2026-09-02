@@ -13,11 +13,11 @@ class ConfigurationError(ValueError):
 
 @dataclass(frozen=True)
 class Settings:
-    """Validated settings used to connect to the DeepSeek API."""
+    """Validated settings used to connect to an LLM API."""
 
     api_key: str
-    model: str = "deepseek-v4-flash"
-    base_url: str = "https://api.deepseek.com"
+    model: str = ""
+    base_url: str = ""
     timeout_seconds: float = 60.0
     max_retries: int = 2
     max_context_chars: int = 200_000
@@ -35,34 +35,34 @@ class Settings:
             load_dotenv()
             environ = os.environ
 
-        api_key = environ.get("DEEPSEEK_API_KEY", "").strip()
+        api_key = environ.get("LLM_API_KEY", "").strip()
         if not api_key:
-            raise ConfigurationError("缺少环境变量 DEEPSEEK_API_KEY。")
+            raise ConfigurationError("缺少环境变量 LLM_API_KEY。")
 
-        model = environ.get("DEEPSEEK_MODEL", cls.model).strip()
+        model = environ.get("LLM_MODEL", "").strip()
         if not model:
-            raise ConfigurationError("DEEPSEEK_MODEL 不能为空。")
+            raise ConfigurationError("缺少环境变量 LLM_MODEL。")
 
-        base_url = environ.get("DEEPSEEK_BASE_URL", cls.base_url).strip().rstrip("/")
+        base_url = environ.get("LLM_BASE_URL", "").strip().rstrip("/")
         if not base_url.startswith(("https://", "http://")):
-            raise ConfigurationError("DEEPSEEK_BASE_URL 必须是有效的 HTTP(S) 地址。")
+            raise ConfigurationError("LLM_BASE_URL 必须是有效的 HTTP(S) 地址。")
 
         timeout_seconds = _parse_positive_float(
-            environ.get("DEEPSEEK_TIMEOUT_SECONDS", str(cls.timeout_seconds)),
-            "DEEPSEEK_TIMEOUT_SECONDS",
+            environ.get("LLM_TIMEOUT_SECONDS", str(cls.timeout_seconds)),
+            "LLM_TIMEOUT_SECONDS",
         )
         max_retries = _parse_non_negative_int(
-            environ.get("DEEPSEEK_MAX_RETRIES", str(cls.max_retries)),
-            "DEEPSEEK_MAX_RETRIES",
+            environ.get("LLM_MAX_RETRIES", str(cls.max_retries)),
+            "LLM_MAX_RETRIES",
         )
         max_context_chars = _parse_positive_int(
             environ.get(
-                "DEEPSEEK_MAX_CONTEXT_CHARS",
+                "MINI_AGENT_MAX_CONTEXT_CHARS",
                 str(cls.max_context_chars),
             ),
-            "DEEPSEEK_MAX_CONTEXT_CHARS",
+            "MINI_AGENT_MAX_CONTEXT_CHARS",
         )
-        summary_model = environ.get("DEEPSEEK_SUMMARY_MODEL", "").strip()
+        summary_model = environ.get("LLM_SUMMARY_MODEL", "").strip()
 
         return cls(
             api_key=api_key,

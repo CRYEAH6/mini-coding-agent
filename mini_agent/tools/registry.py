@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping, Optional, Sequence, Union
 
+from mini_agent.tools.access import WorkspaceAccessManager
 from mini_agent.tools.approval import ApprovalHandler
 from mini_agent.tools.filesystem import FileTools
 from mini_agent.tools.git import GitTools
@@ -26,15 +27,18 @@ class ToolRegistry:
         approval_handler: Optional[ApprovalHandler] = None,
         sandbox_mode: str = STRICT_MODE,
     ) -> None:
-        file_tools = FileTools(workspace)
+        access_manager = WorkspaceAccessManager(workspace, approval_handler)
+        file_tools = FileTools(workspace, access_manager)
         git_tools = GitTools(workspace, approval_handler=approval_handler)
         shell_tool = ShellTool(
             workspace,
             allow_dangerous_commands=allow_dangerous_commands,
             approval_handler=approval_handler,
             sandbox_mode=sandbox_mode,
+            access_manager=access_manager,
         )
         self._handlers: dict[str, ToolHandler] = {
+            "request_workspace_access": access_manager.request_access,
             "list_files": file_tools.list_files,
             "read_file": file_tools.read_file,
             "write_file": file_tools.write_file,
@@ -75,14 +79,51 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
     {
         "type": "function",
         "function": {
-            "name": "list_files",
-            "description": "列出工作目录中指定目录的直接子项。",
+            "name": "request_workspace_access",
+            "description": (
+                "请求用户临时授权访问主工作区外的项目目录。"
+                "访问外部文件或让命令使用外部项目之前必须先调用；"
+                "权限仅在本次 Agent 运行期间有效。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "相对工作目录的路径，默认为当前目录。",
+                        "description": "需要访问的外部项目目录绝对路径。",
+                    },
+                    "access": {
+                        "type": "string",
+                        "enum": ["read", "read_write"],
+                        "description": "申请只读或读取和修改权限。",
+                    },
+                    "reason": {
+                        "type": "string",
+                        "description": "向用户说明申请访问该项目的具体原因。",
+                    },
+                },
+                "required": ["path", "access", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_files",
+            "description": (
+                "列出指定目录的直接子项。主工作区内使用相对路径；"
+                "已授权的外部项目使用绝对路径。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "主工作区内的相对路径，默认为当前目录；"
+                            "外部项目使用已授权目录内的绝对路径。"
+                        ),
                     }
                 },
                 "additionalProperties": False,
@@ -93,13 +134,19 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
         "type": "function",
         "function": {
             "name": "read_file",
-            "description": "读取工作目录内的 UTF-8 文本文件。",
+            "description": (
+                "读取 UTF-8 文本文件。主工作区内使用相对路径；"
+                "已授权的外部项目使用绝对路径。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "相对工作目录的文件路径。",
+                        "description": (
+                            "主工作区内的相对文件路径，或已授权外部项目中的"
+                            "绝对文件路径。"
+                        ),
                     }
                 },
                 "required": ["path"],
@@ -111,13 +158,19 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "创建或完整写入工作目录内的 UTF-8 文本文件。",
+            "description": (
+                "创建或完整写入 UTF-8 文本文件。主工作区内使用相对路径；"
+                "已获得 read_write 授权的外部项目使用绝对路径。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "相对工作目录的文件路径。",
+                        "description": (
+                            "主工作区内的相对文件路径，或已获得 read_write "
+                            "授权的外部绝对文件路径。"
+                        ),
                     },
                     "content": {
                         "type": "string",
@@ -133,13 +186,19 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
         "type": "function",
         "function": {
             "name": "replace_in_file",
-            "description": "精确替换文本文件中的一段内容。",
+            "description": (
+                "精确替换文本文件中的一段内容。外部项目必须先获得"
+                " read_write 授权并使用绝对路径。"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "path": {
                         "type": "string",
-                        "description": "相对工作目录的文件路径。",
+                        "description": (
+                            "主工作区内的相对文件路径，或已获得 read_write "
+                            "授权的外部绝对文件路径。"
+                        ),
                     },
                     "old_text": {
                         "type": "string",
@@ -165,6 +224,7 @@ TOOL_DEFINITIONS: Sequence[Mapping[str, Any]] = (
             "name": "run_command",
             "description": (
                 "在工作目录中执行一条 zsh 命令并返回退出码和输出；"
+                "严格沙箱只开放主工作区和已授权的外部项目；"
                 "高风险命令默认会被阻止。"
             ),
             "parameters": {

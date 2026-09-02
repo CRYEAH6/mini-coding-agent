@@ -4,7 +4,7 @@ import json
 import re
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from mini_agent.client import DeepSeekClient
+from mini_agent.client import LLMClient
 
 
 MAX_SUMMARY_CHARS = 6_000
@@ -15,7 +15,7 @@ SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"(?i)(bearer\s+)[^\s\"']+"),
     re.compile(
-        r"(?i)((?:DEEPSEEK_)?API_KEY[\"']?\s*[=:]\s*"
+        r"(?i)((?:[A-Z0-9]+_)*API_KEY[\"']?\s*[=:]\s*"
         r"[\"']?)[^\s\"',}]+"
     ),
     re.compile(
@@ -43,7 +43,7 @@ class SemanticSummarizer:
 
     def __init__(
         self,
-        client: DeepSeekClient,
+        client: LLMClient,
         model: str,
         *,
         max_summary_chars: int = MAX_SUMMARY_CHARS,

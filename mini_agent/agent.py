@@ -7,7 +7,7 @@ from pathlib import Path
 import shlex
 from typing import Any, Callable, Mapping, Optional, Sequence
 
-from mini_agent.client import DeepSeekClient, TextHandler
+from mini_agent.client import LLMClient, TextHandler
 from mini_agent.context import ContextManager, SummaryGenerator, validate_history
 from mini_agent.memory import MemoryError, MemoryStore
 from mini_agent.tools import ToolRegistry, ToolResult
@@ -22,7 +22,11 @@ SYSTEM_PROMPT = """你是一个在本地项目中工作的编程智能体。
 请先理解任务和现有代码，再选择合适的工具完成修改。
 开始任务以及进入新的工作阶段时，先用一句简短自然语言说明当前目标和接下来的动作，再调用工具。
 只在阶段发生变化时播报，不要逐条机械复述工具操作，也不要展示内部推理过程。
-文件路径必须使用相对工作目录的路径。修改后应尽量运行相关测试。
+主工作区内的文件路径必须使用相对路径。修改后应尽量运行相关测试。
+主工作区外的项目默认不可访问。确实需要访问时，先调用 request_workspace_access，
+向用户说明外部项目的绝对路径、所需权限和原因；用户拒绝后不得绕过或重复申请。
+获得授权后，文件和命令工具访问该外部项目时使用绝对路径。
+读取权限不代表修改权限，授权仅在当前程序运行期间有效。
 在较大修改前可使用 git_checkpoint 保存本地检查点，并使用 git_diff 检查实际改动。
 敏感 shell 命令会请求用户确认，高风险命令默认会被安全策略阻止，请优先使用非破坏性方案。
 run_command 默认禁止网络；确实需要联网时设置 network_access=true，并等待用户确认。
@@ -62,7 +66,7 @@ class CodingAgent:
 
     def __init__(
         self,
-        client: DeepSeekClient,
+        client: LLMClient,
         tools: ToolRegistry,
         *,
         max_steps: int = DEFAULT_MAX_STEPS,
@@ -341,7 +345,7 @@ class CodingAgent:
 
 
 def _serialize_assistant_message(message: Any) -> Mapping[str, Any]:
-    """Preserve the fields required for the next DeepSeek request."""
+    """Preserve the fields required for the next model request."""
     payload: dict[str, Any] = {
         "role": "assistant",
         "content": getattr(message, "content", None),
@@ -398,6 +402,8 @@ def _describe_tool_call(name: str, arguments: str) -> str:
         return "（参数不是对象）"
 
     path = parsed.get("path")
+    if name == "request_workspace_access":
+        return f"（path={path}，access={parsed.get('access')}）"
     if name in {"list_files", "read_file"}:
         return f"（path={path or '.'}）"
     if name == "write_file":

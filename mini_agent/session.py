@@ -25,7 +25,7 @@ SECRET_PATTERNS = (
     re.compile(r"\bsk-[A-Za-z0-9_-]{8,}\b"),
     re.compile(r"(?i)(bearer\s+)[^\s\"']+"),
     re.compile(
-        r"(?i)((?:DEEPSEEK_)?API_KEY[\"']?\s*[=:]\s*"
+        r"(?i)((?:[A-Z0-9]+_)*API_KEY[\"']?\s*[=:]\s*"
         r"[\"']?)[^\s\"',}]+"
     ),
     re.compile(

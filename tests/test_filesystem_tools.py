@@ -69,11 +69,13 @@ def test_file_tools_reject_parent_directory_escape(tmp_path: Path) -> None:
     assert "超出了" in result.content
 
 
-def test_file_tools_reject_absolute_paths(tmp_path: Path) -> None:
+def test_file_tools_require_approval_for_external_absolute_paths(
+    tmp_path: Path,
+) -> None:
     result = FileTools(tmp_path).read_file("/etc/hosts")
 
     assert not result.success
-    assert "相对路径" in result.content
+    assert "request_workspace_access" in result.content
 
 
 def test_file_tools_reject_symlink_escape(tmp_path: Path) -> None:

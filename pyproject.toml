@@ -5,8 +5,8 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mini-coding-agent"
 version = "0.1.0"
-description = "A small coding agent built from scratch with DeepSeek tool calling."
-readme = "README.md"
+description = "A small coding agent built from scratch with LLM tool calling."
+readme = "README.txt"
 requires-python = ">=3.9"
 dependencies = [
     "openai>=1.0.0",

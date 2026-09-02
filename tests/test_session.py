@@ -76,13 +76,13 @@ def test_save_redacts_common_secrets(tmp_path: Path) -> None:
     store = SessionStore(workspace, root=tmp_path / "sessions")
     record = store.create()
     messages = _history(
-        "DEEPSEEK_API_KEY=secret-value sk-1234567890",
+        "LLM_API_KEY=secret-value sk-1234567890",
         "Bearer private-token",
     )
     context = {
         "summary_lines": [],
         "omitted_summary_lines": 0,
-        "DEEPSEEK_API_KEY": "nested-secret",
+        "LLM_API_KEY": "nested-secret",
     }
 
     saved = store.save(record.session_id, messages, context)

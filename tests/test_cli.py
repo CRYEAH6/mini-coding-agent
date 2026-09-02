@@ -38,7 +38,7 @@ def test_parser_reads_workspace_and_step_limit() -> None:
 
 def test_main_reports_missing_api_key(monkeypatch, capsys) -> None:
     missing_key = Mock(
-        side_effect=ConfigurationError("缺少环境变量 DEEPSEEK_API_KEY。")
+        side_effect=ConfigurationError("缺少环境变量 LLM_API_KEY。")
     )
     monkeypatch.setattr(Settings, "from_env", missing_key)
 
@@ -46,7 +46,7 @@ def test_main_reports_missing_api_key(monkeypatch, capsys) -> None:
 
     captured = capsys.readouterr()
     assert exit_code == 2
-    assert "DEEPSEEK_API_KEY" in captured.out
+    assert "LLM_API_KEY" in captured.out
     missing_key.assert_called_once_with()
 
 
@@ -79,9 +79,9 @@ def test_main_reports_api_error(monkeypatch, capsys, tmp_path: Path) -> None:
     monkeypatch.setattr(
         Settings,
         "from_env",
-        Mock(return_value=Settings(api_key="test-key")),
+        Mock(return_value=Settings(api_key="test-key", model="test-model")),
     )
-    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(cli_module, "LLMClient", Mock(return_value=object()))
     monkeypatch.setattr(
         cli_module.CodingAgent,
         "run_turn",
@@ -106,9 +106,9 @@ def test_interactive_mode_keeps_accepting_tasks_until_exit(
     monkeypatch.setattr(
         Settings,
         "from_env",
-        Mock(return_value=Settings(api_key="test-key")),
+        Mock(return_value=Settings(api_key="test-key", model="test-model")),
     )
-    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(cli_module, "LLMClient", Mock(return_value=object()))
     run_turn = Mock(
         side_effect=[
             AgentResult("第一轮完成", 1, 0, 0),
@@ -180,9 +180,9 @@ def test_interactive_memory_management_commands(
     monkeypatch.setattr(
         Settings,
         "from_env",
-        Mock(return_value=Settings(api_key="test-key")),
+        Mock(return_value=Settings(api_key="test-key", model="test-model")),
     )
-    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(cli_module, "LLMClient", Mock(return_value=object()))
     monkeypatch.setattr(
         "mini_agent.memory.secrets.token_hex",
         Mock(return_value="a1b2c3d4"),
@@ -263,9 +263,9 @@ def test_main_restores_active_persistent_session(
     monkeypatch.setattr(
         Settings,
         "from_env",
-        Mock(return_value=Settings(api_key="test-key")),
+        Mock(return_value=Settings(api_key="test-key", model="test-model")),
     )
-    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(cli_module, "LLMClient", Mock(return_value=object()))
     restore_session = Mock()
     monkeypatch.setattr(cli_module.CodingAgent, "restore_session", restore_session)
     monkeypatch.setattr("builtins.input", Mock(return_value="/exit"))
@@ -300,9 +300,9 @@ def test_interactive_session_management_commands(
     monkeypatch.setattr(
         Settings,
         "from_env",
-        Mock(return_value=Settings(api_key="test-key")),
+        Mock(return_value=Settings(api_key="test-key", model="test-model")),
     )
-    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(cli_module, "LLMClient", Mock(return_value=object()))
     monkeypatch.setattr(
         cli_module.CodingAgent,
         "export_session",
@@ -353,9 +353,9 @@ def test_deleting_current_session_creates_replacement(
     monkeypatch.setattr(
         Settings,
         "from_env",
-        Mock(return_value=Settings(api_key="test-key")),
+        Mock(return_value=Settings(api_key="test-key", model="test-model")),
     )
-    monkeypatch.setattr(cli_module, "DeepSeekClient", Mock(return_value=object()))
+    monkeypatch.setattr(cli_module, "LLMClient", Mock(return_value=object()))
     monkeypatch.setattr(
         cli_module.CodingAgent,
         "export_session",

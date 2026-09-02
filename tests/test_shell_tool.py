@@ -115,7 +115,7 @@ def test_network_access_must_be_boolean(tmp_path: Path) -> None:
 
 
 def test_policy_mode_does_not_inherit_api_key(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setenv("DEEPSEEK_API_KEY", "must-not-leak")
+    monkeypatch.setenv("LLM_API_KEY", "must-not-leak")
     monkeypatch.setenv("SAFE_DEMO_VALUE", "visible")
 
     result = ShellTool(tmp_path, sandbox_mode="policy").run_command("env")

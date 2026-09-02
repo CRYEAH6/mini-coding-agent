@@ -7,7 +7,7 @@ from typing import Callable, Optional, Sequence
 from openai import APIError
 
 from mini_agent.agent import AgentResult, CodingAgent, StepLimitError
-from mini_agent.client import DeepSeekClient
+from mini_agent.client import LLMClient
 from mini_agent.config import ConfigurationError, Settings
 from mini_agent.memory import CATEGORY_LABELS, MemoryError, MemoryStore
 from mini_agent.session import (
@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the command-line argument parser."""
     parser = argparse.ArgumentParser(
         prog="mini-agent",
-        description="使用 DeepSeek 和本地工具完成编程任务。",
+        description="使用大语言模型和本地工具完成编程任务。",
     )
     parser.add_argument(
         "--workspace",
@@ -67,7 +67,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             approval_handler=_confirm_tool_action,
             sandbox_mode=args.sandbox_mode,
         )
-        client = DeepSeekClient(settings)
+        client = LLMClient(settings)
         summarizer = SemanticSummarizer(
             client,
             settings.effective_summary_model,

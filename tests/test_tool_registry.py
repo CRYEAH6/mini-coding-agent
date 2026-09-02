@@ -18,6 +18,7 @@ def test_registry_exposes_all_tool_definitions(tmp_path: Path) -> None:
         "git_status",
         "list_files",
         "read_file",
+        "request_workspace_access",
         "write_file",
         "replace_in_file",
         "run_command",
@@ -34,6 +35,41 @@ def test_registry_executes_json_arguments(tmp_path: Path) -> None:
 
     assert result.success
     assert (tmp_path / "hello.txt").read_text(encoding="utf-8") == "hello"
+
+
+def test_registry_grants_external_project_access_after_approval(
+    tmp_path: Path,
+) -> None:
+    workspace = tmp_path / "main"
+    external = tmp_path / "external"
+    workspace.mkdir()
+    external.mkdir()
+    (external / "shared.txt").write_text("shared", encoding="utf-8")
+    approval_handler = Mock(return_value=True)
+    registry = ToolRegistry(workspace, approval_handler=approval_handler)
+
+    granted = registry.execute(
+        "request_workspace_access",
+        json.dumps(
+            {
+                "path": str(external),
+                "access": "read",
+                "reason": "读取共享配置。",
+            }
+        ),
+    )
+    read = registry.execute(
+        "read_file",
+        json.dumps({"path": str(external / "shared.txt")}),
+    )
+
+    assert granted.success
+    assert read.success
+    assert read.content == "shared"
+    request = approval_handler.call_args.args[0]
+    assert request.tool_name == "request_workspace_access"
+    assert str(external) in request.details
+    assert "只读" in request.details
 
 
 def test_registry_rejects_unknown_tool(tmp_path: Path) -> None:

@@ -75,8 +75,10 @@ class CommandSandbox:
         command: str,
         *,
         allow_network: bool,
+        external_read_paths: Sequence[Path] = (),
+        external_write_paths: Sequence[Path] = (),
     ) -> Iterator[ExecutionPlan]:
-        """Yield an isolated execution plan for one command."""
+        """Yield a command plan with only approved filesystem roots."""
         if self._mode == POLICY_MODE:
             yield ExecutionPlan(
                 ("/bin/zsh", "-c", command),
@@ -98,6 +100,8 @@ class CommandSandbox:
                 self._workspace,
                 temporary_path,
                 allow_network=allow_network,
+                external_read_paths=external_read_paths,
+                external_write_paths=external_write_paths,
             )
             environment = _strict_environment(
                 self._workspace,
@@ -131,8 +135,15 @@ def _build_profile(
     temporary: Path,
     *,
     allow_network: bool,
+    external_read_paths: Sequence[Path] = (),
+    external_write_paths: Sequence[Path] = (),
 ) -> str:
-    readable_paths = [*SYSTEM_READ_PATHS, str(workspace), str(temporary)]
+    readable_paths = [
+        *SYSTEM_READ_PATHS,
+        str(workspace),
+        str(temporary),
+        *(str(path) for path in external_read_paths),
+    ]
     readable = " ".join(
         f'(subpath "{_escape_profile_path(path)}")'
         for path in readable_paths
@@ -140,7 +151,11 @@ def _build_profile(
     )
     writable = " ".join(
         f'(subpath "{_escape_profile_path(path)}")'
-        for path in (str(workspace), str(temporary))
+        for path in (
+            str(workspace),
+            str(temporary),
+            *(str(path) for path in external_write_paths),
+        )
     )
     network_rule = "(allow network-outbound)" if allow_network else ""
     return " ".join(

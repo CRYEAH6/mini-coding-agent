@@ -1,11 +1,11 @@
-"""Tests for the DeepSeek API client wrapper."""
+"""Tests for the generic LLM API client wrapper."""
 
 from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 
-from mini_agent.client import DeepSeekClient
+from mini_agent.client import LLMClient
 from mini_agent.config import Settings
 
 
@@ -19,7 +19,7 @@ def test_create_message_sends_messages_and_tools() -> None:
     fake_client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=completion))
     )
-    client = DeepSeekClient(_settings(), client=fake_client)
+    client = LLMClient(_settings(), client=fake_client)
     messages = [{"role": "user", "content": "Fix the bug"}]
     tools = [{"type": "function", "function": {"name": "read_file"}}]
 
@@ -39,7 +39,7 @@ def test_create_message_omits_empty_tools() -> None:
     fake_client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=completion))
     )
-    client = DeepSeekClient(_settings(), client=fake_client)
+    client = LLMClient(_settings(), client=fake_client)
     messages = [{"role": "user", "content": "Hello"}]
 
     client.create_message(messages)
@@ -57,7 +57,7 @@ def test_create_message_can_override_model_for_auxiliary_requests() -> None:
     fake_client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=completion))
     )
-    client = DeepSeekClient(_settings(), client=fake_client)
+    client = LLMClient(_settings(), client=fake_client)
     messages = [{"role": "user", "content": "Summarize"}]
 
     result = client.create_message(messages, model="summary-model")
@@ -74,7 +74,7 @@ def test_create_message_rejects_empty_choices() -> None:
     fake_client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=completion))
     )
-    client = DeepSeekClient(_settings(), client=fake_client)
+    client = LLMClient(_settings(), client=fake_client)
 
     with pytest.raises(RuntimeError, match="choices"):
         client.create_message([{"role": "user", "content": "Hello"}])
@@ -119,7 +119,7 @@ def test_create_message_streams_text_and_assembles_tool_calls() -> None:
     fake_client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=completion))
     )
-    client = DeepSeekClient(_settings(), client=fake_client)
+    client = LLMClient(_settings(), client=fake_client)
     text_chunks = []
 
     message = client.create_message(
@@ -147,7 +147,7 @@ def test_create_message_rejects_empty_stream() -> None:
     fake_client = SimpleNamespace(
         chat=SimpleNamespace(completions=SimpleNamespace(create=completion))
     )
-    client = DeepSeekClient(_settings(), client=fake_client)
+    client = LLMClient(_settings(), client=fake_client)
 
     with pytest.raises(RuntimeError, match="空的流式响应"):
         client.create_message(

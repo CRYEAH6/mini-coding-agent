@@ -6,6 +6,7 @@ import signal
 import subprocess
 from typing import Optional, Union
 
+from mini_agent.tools.access import WorkspaceAccessManager
 from mini_agent.tools.approval import ApprovalHandler, ApprovalRequest
 from mini_agent.tools.result import ToolResult
 from mini_agent.tools.sandbox import CommandSandbox, SandboxError, STRICT_MODE
@@ -27,6 +28,7 @@ class ShellTool:
         allow_dangerous_commands: bool = False,
         approval_handler: Optional[ApprovalHandler] = None,
         sandbox_mode: str = STRICT_MODE,
+        access_manager: Optional[WorkspaceAccessManager] = None,
     ) -> None:
         resolved = Path(workspace).expanduser().resolve()
         if not resolved.is_dir():
@@ -35,6 +37,10 @@ class ShellTool:
         self._policy = CommandPolicy(allow_dangerous_commands)
         self._request_approval = approval_handler
         self._sandbox = CommandSandbox(resolved, sandbox_mode)
+        self._access = access_manager or WorkspaceAccessManager(
+            resolved,
+            approval_handler,
+        )
 
     def run_command(
         self,
@@ -84,6 +90,8 @@ class ShellTool:
             with self._sandbox.prepare(
                 command,
                 allow_network=allow_network,
+                external_read_paths=self._access.readable_roots,
+                external_write_paths=self._access.writable_roots,
             ) as plan:
                 process = subprocess.Popen(
                     plan.arguments,

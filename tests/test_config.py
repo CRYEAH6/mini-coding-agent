@@ -5,12 +5,18 @@ import pytest
 from mini_agent.config import ConfigurationError, Settings
 
 
-def test_settings_load_required_key_and_defaults() -> None:
-    settings = Settings.from_env({"DEEPSEEK_API_KEY": "test-key"})
+def test_settings_load_required_values_and_defaults() -> None:
+    settings = Settings.from_env(
+        {
+            "LLM_API_KEY": "test-key",
+            "LLM_MODEL": "test-model",
+            "LLM_BASE_URL": "https://example.com/v1",
+        }
+    )
 
     assert settings.api_key == "test-key"
-    assert settings.model == "deepseek-v4-flash"
-    assert settings.base_url == "https://api.deepseek.com"
+    assert settings.model == "test-model"
+    assert settings.base_url == "https://example.com/v1"
     assert settings.timeout_seconds == 60.0
     assert settings.max_retries == 2
     assert settings.max_context_chars == 200_000
@@ -20,13 +26,13 @@ def test_settings_load_required_key_and_defaults() -> None:
 def test_settings_load_overrides() -> None:
     settings = Settings.from_env(
         {
-            "DEEPSEEK_API_KEY": "test-key",
-            "DEEPSEEK_MODEL": "custom-model",
-            "DEEPSEEK_BASE_URL": "https://example.com/",
-            "DEEPSEEK_TIMEOUT_SECONDS": "30.5",
-            "DEEPSEEK_MAX_RETRIES": "4",
-            "DEEPSEEK_MAX_CONTEXT_CHARS": "50000",
-            "DEEPSEEK_SUMMARY_MODEL": "summary-model",
+            "LLM_API_KEY": "test-key",
+            "LLM_MODEL": "custom-model",
+            "LLM_BASE_URL": "https://example.com/",
+            "LLM_TIMEOUT_SECONDS": "30.5",
+            "LLM_MAX_RETRIES": "4",
+            "MINI_AGENT_MAX_CONTEXT_CHARS": "50000",
+            "LLM_SUMMARY_MODEL": "summary-model",
         }
     )
 
@@ -39,21 +45,28 @@ def test_settings_load_overrides() -> None:
 
 
 def test_settings_reject_missing_api_key() -> None:
-    with pytest.raises(ConfigurationError, match="DEEPSEEK_API_KEY"):
+    with pytest.raises(ConfigurationError, match="LLM_API_KEY"):
         Settings.from_env({})
 
 
 @pytest.mark.parametrize(
     ("name", "value"),
     [
-        ("DEEPSEEK_TIMEOUT_SECONDS", "0"),
-        ("DEEPSEEK_TIMEOUT_SECONDS", "not-a-number"),
-        ("DEEPSEEK_MAX_RETRIES", "-1"),
-        ("DEEPSEEK_MAX_RETRIES", "1.5"),
-        ("DEEPSEEK_MAX_CONTEXT_CHARS", "0"),
-        ("DEEPSEEK_MAX_CONTEXT_CHARS", "100.5"),
+        ("LLM_TIMEOUT_SECONDS", "0"),
+        ("LLM_TIMEOUT_SECONDS", "not-a-number"),
+        ("LLM_MAX_RETRIES", "-1"),
+        ("LLM_MAX_RETRIES", "1.5"),
+        ("MINI_AGENT_MAX_CONTEXT_CHARS", "0"),
+        ("MINI_AGENT_MAX_CONTEXT_CHARS", "100.5"),
     ],
 )
 def test_settings_reject_invalid_numeric_values(name: str, value: str) -> None:
     with pytest.raises(ConfigurationError, match=name):
-        Settings.from_env({"DEEPSEEK_API_KEY": "test-key", name: value})
+        Settings.from_env(
+            {
+                "LLM_API_KEY": "test-key",
+                "LLM_MODEL": "test-model",
+                "LLM_BASE_URL": "https://example.com/v1",
+                name: value,
+            }
+        )
